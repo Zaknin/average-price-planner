@@ -33,8 +33,26 @@ describe('application smoke test', () => {
 
     expect(document.body.textContent).toContain('Buy added to the plan');
     expect(document.querySelectorAll('[data-remove]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-remove-mobile]')).toHaveLength(1);
     expect(document.querySelector<HTMLInputElement>('#transactionShares')?.value).toBe('0');
     expect(document.querySelector<HTMLInputElement>('#transactionPrice')?.value).toBe(priceBefore);
+  });
+
+  it('renders mobile-specific controls and accessible disclosures', () => {
+    const holdingEditor = document.querySelector<HTMLButtonElement>('#toggleHoldingEditor');
+    expect(holdingEditor?.getAttribute('aria-controls')).toBe('holdingEditor');
+    expect(holdingEditor?.getAttribute('aria-expanded')).toBe('false');
+    holdingEditor?.click();
+    expect(document.querySelector('#holdingEditor')?.classList.contains('is-expanded')).toBe(true);
+
+    const curveToggle = document.querySelector<HTMLButtonElement>('#toggleCurve');
+    expect(curveToggle?.getAttribute('aria-controls')).toBe('improvementCurve');
+    expect(curveToggle?.getAttribute('aria-expanded')).toBe('false');
+    curveToggle?.click();
+    expect(document.querySelector('#improvementCurve')?.classList.contains('is-expanded')).toBe(true);
+
+    expect(document.querySelectorAll('.scenario-card')).not.toHaveLength(0);
+    expect(document.querySelectorAll('.transaction-card')).toHaveLength(1);
   });
 
   it('creates and switches to another saved position', () => {
@@ -76,6 +94,13 @@ describe('application smoke test', () => {
 
     document.querySelector<HTMLButtonElement>('[data-action="sell"]')?.click();
     expect(document.body.textContent).toContain('Selling shares does not change the average cost');
+
+    const salePrice = document.querySelector<HTMLInputElement>('#transactionPrice')?.value;
+    document.querySelector<HTMLButtonElement>('#addTransaction')?.click();
+    expect(document.body.textContent).toContain('Sale added to the plan');
+    expect(document.querySelector<HTMLInputElement>('#transactionShares')?.value).toBe('0');
+    expect(document.querySelector<HTMLInputElement>('#transactionPrice')?.value).toBe(salePrice);
+    expect(document.querySelectorAll('.transaction-card .action-tag.sell')).toHaveLength(1);
   });
 
   it('shows purchase settings without a disclosure and gives both sliders a 5–100 range', () => {

@@ -2,6 +2,16 @@
 
 A browser-local planner for stock purchases, average-down analysis, future sales, and multiple saved holdings.
 
+## Version 1.4.0
+
+This release redesigns the mobile experience from 320 px through 430 px wide while keeping the desktop workspace and calculation behavior intact.
+
+- Position navigation and the active-holding summary now appear before the calculator on phones.
+- Holding fields and purchase settings move into an accessible **Edit holding** disclosure on phones.
+- Results use a compact 2 × 2 grid; scenarios and planned transactions use mobile cards instead of desktop tables.
+- The improvement curve is collapsed by default on phones and opens with **Show improvement curve**.
+- The application uses smaller, touch-friendly spacing and controls without horizontal page scrolling.
+
 ## Version 1.3.0
 
 This release makes the purchase controls easier to use:

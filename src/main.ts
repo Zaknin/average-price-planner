@@ -60,6 +60,8 @@ const app: HTMLDivElement = appElement;
 
 let notice = '';
 let store = loadStore();
+let holdingEditorExpanded = false;
+let curveExpanded = false;
 
 function createId(): string {
   const cryptoObject = globalThis.crypto as Crypto | undefined;
@@ -274,6 +276,31 @@ function holdingName(holding: HoldingState, index: number): string {
   return `${ticker} · ${formatQuantity(holding.baseShares, holding)} shares`;
 }
 
+function holdingSummary(holding: HoldingState): string {
+  const ticker = escapeHtml(holding.ticker || 'Unnamed position');
+  const position = validBasePosition(holding);
+  const positionText = position
+    ? `${formatQuantity(position.shares, holding)} shares · Average ${formatCurrency(position.averagePrice, holding)}`
+    : 'Add your shares and average price';
+  return `
+    <div class="holding-mobile-summary">
+      <div class="holding-summary-copy">
+        <span class="eyebrow">Active holding</span>
+        <strong title="${ticker}">${ticker}</strong>
+        <span>${positionText}</span>
+        <span>Budget ${formatCurrency(holding.budget, holding)}</span>
+      </div>
+      <button
+        id="toggleHoldingEditor"
+        class="secondary-button holding-editor-toggle"
+        type="button"
+        aria-expanded="${holdingEditorExpanded}"
+        aria-controls="holdingEditor"
+      >${holdingEditorExpanded ? 'Done editing' : 'Edit holding'}</button>
+    </div>
+  `;
+}
+
 function metricCard(title: string, value: string, detail: string, footer = '', tone = ''): string {
   return `
     <article class="metric-card ${tone}">
@@ -462,8 +489,23 @@ function scenarioTable(position: Position, holding: HoldingState): string {
     .sort((a, b) => a - b)
     .map((candidate) => analyzePurchase(position, candidate, price));
 
+  const scenarioCards = values.map((item) => `
+    <article class="scenario-card">
+      <div class="scenario-card-heading">
+        <strong>${formatQuantity(item.quantity)} shares</strong>
+        <span>${formatCurrency(item.cost)}</span>
+      </div>
+      <dl>
+        <div><dt>New average</dt><dd>${formatCurrency(item.newAverage)}</dd></div>
+        <div><dt>Average lowered</dt><dd class="positive">${formatCurrency(item.reduction)} (${percent(item.reductionPercent)})</dd></div>
+        <div><dt>Possible drop</dt><dd>${percent(item.theoreticalReductionCaptured * 100)}</dd></div>
+        <div><dt>Next-share usefulness</dt><dd>${percent(item.marginalEfficiencyRemaining * 100)}</dd></div>
+      </dl>
+    </article>
+  `).join('');
+
   return `
-    <div class="table-wrap">
+    <div class="table-wrap scenario-table">
       <table>
         <thead>
           <tr>
@@ -489,6 +531,7 @@ function scenarioTable(position: Position, holding: HoldingState): string {
         </tbody>
       </table>
     </div>
+    <div class="scenario-cards" aria-label="Purchase scenario comparison">${scenarioCards}</div>
   `;
 }
 
@@ -526,13 +569,21 @@ function curveSvg(position: Position, holding: HoldingState): string {
 
   return `
     <div class="curve-panel">
-      <div class="section-heading compact">
+      <div class="section-heading compact curve-heading">
         <div>
           <span class="eyebrow">Diminishing returns</span>
           <h3>Why larger buys help less</h3>
         </div>
         <span class="muted">The first shares have the strongest effect. The curve flattens as the purchase grows.</span>
+        <button
+          id="toggleCurve"
+          type="button"
+          class="text-button curve-toggle"
+          aria-expanded="${curveExpanded}"
+          aria-controls="improvementCurve"
+        >${curveExpanded ? 'Hide improvement curve' : 'Show improvement curve'}</button>
       </div>
+      <div id="improvementCurve" class="curve-content ${curveExpanded ? 'is-expanded' : ''}">
       <svg class="curve" viewBox="0 0 ${width} ${height}" role="img" aria-label="Average-down benefit curve">
         <line x1="${padX}" y1="${padY}" x2="${padX}" y2="${padY + plotH}" class="axis" />
         <line x1="${padX}" y1="${padY + plotH}" x2="${padX + plotW}" y2="${padY + plotH}" class="axis" />
@@ -546,6 +597,7 @@ function curveSvg(position: Position, holding: HoldingState): string {
         <text x="${padX}" y="${height - 10}" class="chart-label">0 shares</text>
         <text x="${padX + plotW - 80}" y="${height - 10}" class="chart-label">${formatQuantity(xMax)}</text>
       </svg>
+      </div>
     </div>
   `;
 }
@@ -555,8 +607,41 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
     return `<div class="empty-state">No planned transactions yet. Test a buy or sale above, then add it here.</div>`;
   }
 
+  const transactionCards = results.map((result, index) => {
+    const resultText = !result.valid
+      ? result.error ?? 'Invalid transaction'
+      : result.type === 'sell'
+        ? `${result.realizedProfitLoss >= 0 ? 'Gain' : 'Loss'} ${formatCurrency(Math.abs(result.realizedProfitLoss), holding)}`
+        : result.reduction > 0
+          ? `Average −${formatCurrency(result.reduction, holding)}`
+          : result.averageChange > 0
+            ? `Average +${formatCurrency(result.averageChange, holding)}`
+            : 'Average unchanged';
+    const resultClass = !result.valid
+      ? 'negative'
+      : result.type === 'sell'
+        ? result.realizedProfitLoss >= 0 ? 'positive' : 'negative'
+        : result.reduction > 0 ? 'positive' : result.averageChange > 0 ? 'negative' : '';
+    return `
+      <article class="transaction-card ${result.valid ? '' : 'invalid-row'}">
+        <div class="transaction-card-heading">
+          <span class="action-tag ${result.type}">${result.type === 'buy' ? 'Buy' : 'Sell'}</span>
+          <button class="icon-button" data-remove-mobile="${result.id}" aria-label="Remove transaction ${index + 1}">×</button>
+        </div>
+        <dl>
+          <div><dt>Price</dt><dd>${formatCurrency(result.price, holding)}</dd></div>
+          <div><dt>Shares</dt><dd>${formatQuantity(result.shares, holding)}</dd></div>
+          <div><dt>Cash</dt><dd>${result.type === 'buy' ? '−' : '+'}${formatCurrency(result.grossAmount, holding)}</dd></div>
+          <div><dt>Shares after</dt><dd>${formatQuantity(result.sharesAfter, holding)}</dd></div>
+          <div><dt>Average after</dt><dd>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter, holding) : 'Closed'}</dd></div>
+          <div><dt>Result</dt><dd class="${resultClass}">${escapeHtml(resultText)}</dd></div>
+        </dl>
+      </article>
+    `;
+  }).join('');
+
   return `
-    <div class="table-wrap">
+    <div class="table-wrap transaction-table">
       <table>
         <thead>
           <tr>
@@ -617,6 +702,7 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
         </tbody>
       </table>
     </div>
+    <div class="transaction-cards" aria-label="Planned transactions">${transactionCards}</div>
   `;
 }
 
@@ -627,10 +713,11 @@ function field(
   type: 'text' | 'number',
   placeholder: string,
   step = 'any',
+  mobileLabel = label,
 ): string {
   return `
     <label class="field">
-      <span>${label}</span>
+      <span><span class="desktop-field-label">${label}</span><span class="mobile-field-label">${mobileLabel}</span></span>
       <input id="${id}" type="${type}" value="${escapeHtml(String(value))}" placeholder="${placeholder}" ${type === 'number' ? `step="${step}" min="0" inputmode="decimal"` : ''} autocomplete="off" />
     </label>
   `;
@@ -656,7 +743,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner</h1>
+          <h1>Average Price Planner <span class="release-tag">v1.4</span></h1>
           <p>Compare future buys and sales for each holding</p>
         </div>
       </div>
@@ -686,6 +773,8 @@ function render(): void {
         </section>
 
         <section class="panel holding-panel">
+          ${holdingSummary(holding)}
+          <div id="holdingEditor" class="holding-editor ${holdingEditorExpanded ? 'is-expanded' : ''}">
           <div class="section-heading">
             <div>
               <span class="eyebrow">Current holding</span>
@@ -718,6 +807,7 @@ function render(): void {
               <small>Find the smallest purchase that gives this percentage of the average-price improvement available from the full budget.</small>
             </label>
           </div>
+          </div>
         </section>
       </aside>
 
@@ -739,8 +829,8 @@ function render(): void {
           </div>
 
           <div class="transaction-entry">
-            ${field('transactionPrice', `${isBuy ? 'Buy' : 'Sell'} price per share`, holding.transactionPrice, 'number', '147')}
-            ${field('transactionShares', `Shares to ${isBuy ? 'buy' : 'sell'}`, holding.transactionShares, 'number', '4')}
+            ${field('transactionPrice', `${isBuy ? 'Buy' : 'Sell'} price per share`, holding.transactionPrice, 'number', '147', 'any', `${isBuy ? 'Buy' : 'Sell'} price`)}
+            ${field('transactionShares', `Shares to ${isBuy ? 'buy' : 'sell'}`, holding.transactionShares, 'number', '4', 'any', 'Shares')}
             <button id="addTransaction" class="primary-button" ${validTransaction ? '' : 'disabled'}>Add ${isBuy ? 'buy' : 'sale'} to plan</button>
           </div>
 
@@ -834,6 +924,16 @@ function wireEvents(): void {
   document.querySelector<HTMLSelectElement>('#holdingSelect')?.addEventListener('change', (event) => {
     store.activeHoldingId = (event.currentTarget as HTMLSelectElement).value;
     saveStore();
+    render();
+  });
+
+  document.querySelector<HTMLButtonElement>('#toggleHoldingEditor')?.addEventListener('click', () => {
+    holdingEditorExpanded = !holdingEditorExpanded;
+    render();
+  });
+
+  document.querySelector<HTMLButtonElement>('#toggleCurve')?.addEventListener('click', () => {
+    curveExpanded = !curveExpanded;
     render();
   });
 
@@ -937,9 +1037,9 @@ function wireEvents(): void {
     render();
   });
 
-  document.querySelectorAll<HTMLButtonElement>('[data-remove]').forEach((button) => {
+  document.querySelectorAll<HTMLButtonElement>('[data-remove], [data-remove-mobile]').forEach((button) => {
     button.addEventListener('click', () => {
-      const id = button.dataset.remove;
+      const id = button.dataset.remove ?? button.dataset.removeMobile;
       const holding = activeHolding();
       holding.transactions = holding.transactions.filter((transaction) => transaction.id !== id);
       notice = 'Transaction removed.';
