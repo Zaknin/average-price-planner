@@ -5,8 +5,8 @@ services:
     container_name: stock-average-optimizer
     restart: unless-stopped
     ports:
-      # Bind only to the OpenStock server LAN interface, not 0.0.0.0.
-      - "${BIND_ADDRESS:-192.168.23.253}:${PORT:-8091}:80"
+      # Require one local interface address; never publish on all interfaces.
+      - "${BIND_ADDRESS:?Set BIND_ADDRESS to a local interface address}:${PORT:-8091}:80"
     security_opt:
       - no-new-privileges:true
     read_only: true

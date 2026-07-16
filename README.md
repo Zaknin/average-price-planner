@@ -38,25 +38,26 @@ npm test
 npm run build
 ```
 
-## Docker deployment on OpenStock
+## Local Docker deployment
 
-The Compose file binds only to the OpenStock LAN address:
+The Compose file requires an explicit local interface address and never defaults to `0.0.0.0`. Copy the example environment file, then set `BIND_ADDRESS` to an address assigned to the Docker host:
 
-```text
-http://192.168.23.253:8091
+```bash
+cp .env.example .env
+# Edit .env and set BIND_ADDRESS to a local LAN address.
 ```
 
 Deploy or update:
 
 ```bash
-cd /opt/stock-average-optimizer
 docker compose up -d --build
 docker compose ps
-curl -fsS http://192.168.23.253:8091/healthz
+# Replace YOUR_LAN_ADDRESS with the value configured in .env.
+curl -fsS "http://YOUR_LAN_ADDRESS:8091/healthz"
 echo
 ```
 
-The Compose configuration binds only to `192.168.23.253:8091`; it does not publish the application on all network interfaces. This repository does not deploy to that server.
+When running the `curl` command, use the same local interface address you placed in `.env`. This repository does not deploy to any self-hosted server.
 
 ## GitHub Pages
 
@@ -78,7 +79,7 @@ GitHub Pages availability for a private repository depends on the account or org
 
 ## Separate browser-local data
 
-The Docker site (`http://192.168.23.253:8091`) and the GitHub Pages site use different web origins. Browsers therefore keep separate `localStorage` for each site: positions and plans saved on one do not appear on the other. Neither site sends this data to a server.
+Any self-hosted Docker site and the GitHub Pages site use different web origins. Browsers therefore keep separate `localStorage` for each site: positions and plans saved on one do not appear on the other. Neither site sends this data to a server.
 
 ## Calculation behavior
 

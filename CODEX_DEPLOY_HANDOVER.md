@@ -1,16 +1,16 @@
-# Codex handover: Average Price Planner v1.3.0
+# Self-hosted Docker handover: Average Price Planner v1.3.0
 
 ## Deployment target
 
-- Server: `192.168.23.253`
-- Directory: `/opt/stock-average-optimizer`
-- URL: `http://192.168.23.253:8091`
-- Health endpoint: `http://192.168.23.253:8091/healthz`
+- Directory: choose a local path on the Docker host.
+- Bind address: set `BIND_ADDRESS` in `.env` to one LAN address assigned to that host.
+- Port: set `PORT` in `.env` (defaults to `8091`).
+- Health endpoint: `http://<BIND_ADDRESS>:<PORT>/healthz`.
 
 ## Update procedure
 
 1. Back up the current directory.
-2. Extract the v1.3.0 package over `/opt/stock-average-optimizer`.
+2. Extract the v1.3.0 package over the selected deployment directory.
 3. Run `docker compose up -d --build`.
 4. Confirm `docker compose ps` and the health endpoint.
 5. Browser-check:
@@ -22,4 +22,4 @@
 
 ## GitHub
 
-Push this directory to the private repository after local validation. The Pages workflow remains available for a public static deployment if enabled.
+Push this directory to the public repository after local validation. The Pages workflow deploys the static frontend separately from any self-hosted Docker instance.
