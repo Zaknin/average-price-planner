@@ -1,6 +1,6 @@
 # Average Price Planner
 
-A browser-local planner for stock purchases, average-down analysis, future sales, and multiple saved holdings. The interface uses a neutral black, white, and gray palette inspired by modern conversational apps.
+A browser-local planner for stock purchases, average-down analysis, future sales, and multiple saved holdings.
 
 ## Version 1.3.0
 
