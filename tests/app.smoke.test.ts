@@ -27,6 +27,9 @@ describe('application smoke test', () => {
     const saved = JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}');
     expect(saved.holdings[0].buyFee).toEqual({ mode: 'percent', value: 0 });
     expect(saved.holdings[0].sellFee).toEqual({ mode: 'percent', value: 0 });
+    expect(saved.version).toBe(3);
+    expect(saved.holdings[0].currentMarketPrice).toBe(0);
+    expect(saved.holdings[0].targetSellMode).toBe('breakEven');
     expect(document.querySelector<HTMLInputElement>('#transactionFee')?.value).toBe('0');
   });
 
@@ -161,6 +164,32 @@ describe('application smoke test', () => {
     expect(efficiency?.max).toBe('100');
     expect(budgetBenefit?.min).toBe('5');
     expect(budgetBenefit?.max).toBe('100');
+  });
+
+  it('persists a current market price and exposes target disclosures without changing the holding', () => {
+    const price = document.querySelector<HTMLInputElement>('#currentMarketPrice');
+    expect(price).not.toBeNull();
+    if (!price) return;
+    price.value = '30';
+    price.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}').holdings.some((holding: { currentMarketPrice: number }) => holding.currentMarketPrice === 30)).toBe(true);
+
+    const targetToggle = document.querySelector<HTMLButtonElement>('#toggleTargets');
+    expect(targetToggle?.getAttribute('aria-controls')).toBe('targetsContent');
+    expect(targetToggle?.getAttribute('aria-expanded')).toBe('false');
+    targetToggle?.click();
+    expect(document.querySelector('#targetsContent')?.classList.contains('is-expanded')).toBe(true);
+    expect(document.body.textContent).toContain('Target average');
+
+    const targetAverage = document.querySelector<HTMLInputElement>('#targetAverage');
+    const targetBuyPrice = document.querySelector<HTMLInputElement>('#targetBuyPrice');
+    if (!targetAverage || !targetBuyPrice) return;
+    targetAverage.value = '15';
+    targetAverage.dispatchEvent(new Event('input', { bubbles: true }));
+    targetBuyPrice.value = '10';
+    targetBuyPrice.dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector<HTMLButtonElement>('[data-target-tab="average"]')?.click();
+    expect(document.body.textContent).toContain('Shares needed');
   });
 
   it('can delete the final remaining position and opens a blank replacement', () => {

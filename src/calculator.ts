@@ -53,6 +53,81 @@ export interface OptimizerResult {
   reductionPer100Cost: number;
 }
 
+export interface TargetAverageRequest {
+  targetAverage: number;
+  purchasePrice: number;
+  fee?: Partial<FeeSettings>;
+  shareStep: number;
+  budget?: number;
+  respectBudget?: boolean;
+}
+
+export interface TargetAverageResult {
+  achievable: boolean;
+  reason: string | null;
+  requiredShares: number;
+  grossAmount: number;
+  feeAmount: number;
+  totalAmount: number;
+  resultingPosition: Position;
+  averageLowered: number;
+  targetReached: boolean;
+  exceedsBudget: boolean;
+  effectivePurchasePrice: number;
+}
+
+export type SaleTargetMode = 'breakEven' | 'profit' | 'return';
+
+export interface SaleTargetRequest {
+  shares: number;
+  mode: SaleTargetMode;
+  targetValue?: number;
+  fee?: Partial<FeeSettings>;
+}
+
+export interface SaleTargetResult {
+  valid: boolean;
+  reason: string | null;
+  shares: number;
+  costBasisSold: number;
+  requiredPrice: number;
+  grossAmount: number;
+  feeAmount: number;
+  netAmount: number;
+  realizedProfitLoss: number;
+  returnPercent: number;
+  remainingPosition: Position;
+}
+
+export interface MarketSnapshot {
+  available: boolean;
+  empty: boolean;
+  reason: string | null;
+  basis: number;
+  marketValue: number;
+  grossUnrealizedProfitLoss: number;
+  grossReturnPercent: number;
+  estimatedSellFee: number;
+  netLiquidationValue: number;
+  netUnrealizedProfitLoss: number;
+  breakEvenPrice: number;
+  movementToBreakEvenPercent: number;
+  aboveBreakEvenPercent: number;
+}
+
+export interface PlannedPositionSnapshot {
+  available: boolean;
+  reason: string | null;
+  finalPosition: Position;
+  resultingBasis: number;
+  marketValue: number;
+  unrealizedProfitLoss: number;
+  realizedProfitLoss: number;
+  netPlannedCashFlow: number;
+  totalFees: number;
+  results: TransactionResult[];
+}
+
 const EPSILON = 1e-12;
 const ZERO_FEE: FeeSettings = { mode: 'percent', value: 0 };
 
@@ -244,6 +319,159 @@ export function roundToShareStep(value: number, step: number, mode: 'floor' | 'c
   const scaled = value / step;
   const rounded = mode === 'floor' ? Math.floor(scaled + EPSILON) : mode === 'ceil' ? Math.ceil(scaled - EPSILON) : Math.round(scaled);
   return Math.max(0, rounded * step);
+}
+
+/** Solves the fee-aware weighted-average equation and rounds the purchase up to the share increment. */
+export function sharesForTargetAverage(position: Position, request: TargetAverageRequest): TargetAverageResult {
+  const fee = normalizeFee(request.fee);
+  const base: TargetAverageResult = {
+    achievable: false,
+    reason: null,
+    requiredShares: 0,
+    grossAmount: 0,
+    feeAmount: 0,
+    totalAmount: 0,
+    resultingPosition: { ...position },
+    averageLowered: 0,
+    targetReached: false,
+    exceedsBudget: false,
+    effectivePurchasePrice: request.purchasePrice * (1 + (fee.mode === 'percent' ? fee.value / 100 : 0)),
+  };
+  if (!isFinitePositive(position.shares) || !isFinitePositive(position.averagePrice)) {
+    return { ...base, reason: 'Enter a current share count and average price first.' };
+  }
+  if (!isFinitePositive(request.targetAverage) || !isFinitePositive(request.purchasePrice) || !isFinitePositive(request.shareStep)) {
+    return { ...base, reason: 'Enter a target average, buy price, and share increment greater than zero.' };
+  }
+  if (request.targetAverage >= position.averagePrice - EPSILON) {
+    return { ...base, reason: 'The target average must be below your current average.' };
+  }
+
+  const denominator = request.targetAverage - base.effectivePurchasePrice;
+  if (denominator <= EPSILON) {
+    const acquisition = fee.mode === 'percent' ? base.effectivePurchasePrice : request.purchasePrice;
+    return { ...base, reason: `The target average must remain above the fee-adjusted purchase cost of ${acquisition.toFixed(4)} per share.` };
+  }
+  const numerator = position.shares * (position.averagePrice - request.targetAverage) + (fee.mode === 'fixed' ? fee.value : 0);
+  const rawShares = numerator / denominator;
+  if (!Number.isFinite(rawShares) || rawShares <= EPSILON) {
+    return { ...base, reason: 'This target cannot be solved with the entered values.' };
+  }
+  const requiredShares = roundToShareStep(rawShares, request.shareStep, 'ceil');
+  const grossAmount = requiredShares * request.purchasePrice;
+  const feeAmount = feeAmountFor(grossAmount, fee);
+  const totalAmount = grossAmount + feeAmount;
+  const resultingPosition = {
+    shares: position.shares + requiredShares,
+    averagePrice: calculateNewAverage(position, requiredShares, request.purchasePrice, fee),
+  };
+  const exceedsBudget = Number.isFinite(request.budget) && Number(request.budget) >= 0 && totalAmount > Number(request.budget) + EPSILON;
+  return {
+    ...base,
+    achievable: !request.respectBudget || !exceedsBudget,
+    reason: request.respectBudget && exceedsBudget ? 'The required purchase exceeds the configured budget.' : null,
+    requiredShares,
+    grossAmount,
+    feeAmount,
+    totalAmount,
+    resultingPosition,
+    averageLowered: Math.max(0, position.averagePrice - resultingPosition.averagePrice),
+    targetReached: resultingPosition.averagePrice <= request.targetAverage + EPSILON,
+    exceedsBudget,
+  };
+}
+
+export function salePriceForTarget(position: Position, request: SaleTargetRequest): SaleTargetResult {
+  const fee = normalizeFee(request.fee);
+  const base: SaleTargetResult = {
+    valid: false,
+    reason: null,
+    shares: request.shares,
+    costBasisSold: 0,
+    requiredPrice: 0,
+    grossAmount: 0,
+    feeAmount: 0,
+    netAmount: 0,
+    realizedProfitLoss: 0,
+    returnPercent: 0,
+    remainingPosition: { ...position },
+  };
+  if (!isFinitePositive(position.shares) || !isFinitePositive(position.averagePrice)) return { ...base, reason: 'Enter a current share count and average price first.' };
+  if (!isFinitePositive(request.shares)) return { ...base, reason: 'Enter a number of shares to sell greater than zero.' };
+  if (request.shares > position.shares + EPSILON) return { ...base, reason: `Cannot sell ${request.shares} shares; only ${position.shares} are available.` };
+  if (fee.mode === 'percent' && fee.value >= 100) return { ...base, reason: 'Sell percentage fees must be less than 100%.' };
+  const targetValue = Number(request.targetValue ?? 0);
+  if (!Number.isFinite(targetValue) || (request.mode !== 'breakEven' && targetValue < 0)) return { ...base, reason: 'Enter a finite target of zero or greater.' };
+  const costBasisSold = request.shares * position.averagePrice;
+  const targetProfit = request.mode === 'return' ? costBasisSold * targetValue / 100 : request.mode === 'profit' ? targetValue : 0;
+  const requiredPrice = fee.mode === 'percent'
+    ? (costBasisSold + targetProfit) / (request.shares * (1 - fee.value / 100))
+    : position.averagePrice + (targetProfit + fee.value) / request.shares;
+  const grossAmount = request.shares * requiredPrice;
+  const feeAmount = feeAmountFor(grossAmount, fee);
+  const netAmount = grossAmount - feeAmount;
+  const realizedProfitLoss = netAmount - costBasisSold;
+  const sharesAfter = Math.max(0, position.shares - request.shares);
+  return {
+    ...base,
+    valid: true,
+    shares: request.shares,
+    costBasisSold,
+    requiredPrice,
+    grossAmount,
+    feeAmount,
+    netAmount,
+    realizedProfitLoss,
+    returnPercent: costBasisSold > EPSILON ? realizedProfitLoss / costBasisSold * 100 : 0,
+    remainingPosition: { shares: sharesAfter, averagePrice: sharesAfter > EPSILON ? position.averagePrice : 0 },
+  };
+}
+
+export function positionMarketSnapshot(position: Position, marketPrice: number, sellFee: Partial<FeeSettings> | undefined = ZERO_FEE): MarketSnapshot {
+  const base: MarketSnapshot = { available: false, empty: false, reason: null, basis: 0, marketValue: 0, grossUnrealizedProfitLoss: 0, grossReturnPercent: 0, estimatedSellFee: 0, netLiquidationValue: 0, netUnrealizedProfitLoss: 0, breakEvenPrice: 0, movementToBreakEvenPercent: 0, aboveBreakEvenPercent: 0 };
+  if (!isFinitePositive(position.shares) || !isFinitePositive(position.averagePrice)) return { ...base, empty: true, reason: 'Add shares and an average price to see this snapshot.' };
+  if (!isFinitePositive(marketPrice)) return { ...base, reason: 'Enter the current market price to see this snapshot.' };
+  const sale = salePriceForTarget(position, { shares: position.shares, mode: 'breakEven', fee: sellFee });
+  if (!sale.valid) return { ...base, reason: sale.reason };
+  const basis = position.shares * position.averagePrice;
+  const marketValue = position.shares * marketPrice;
+  const estimatedSellFee = feeAmountFor(marketValue, sellFee);
+  const netLiquidationValue = marketValue - estimatedSellFee;
+  const breakEvenPrice = sale.requiredPrice;
+  return {
+    ...base,
+    available: true,
+    basis,
+    marketValue,
+    grossUnrealizedProfitLoss: marketValue - basis,
+    grossReturnPercent: (marketValue - basis) / basis * 100,
+    estimatedSellFee,
+    netLiquidationValue,
+    netUnrealizedProfitLoss: netLiquidationValue - basis,
+    breakEvenPrice,
+    movementToBreakEvenPercent: marketPrice < breakEvenPrice ? (breakEvenPrice - marketPrice) / marketPrice * 100 : 0,
+    aboveBreakEvenPercent: marketPrice > breakEvenPrice ? (marketPrice - breakEvenPrice) / breakEvenPrice * 100 : 0,
+  };
+}
+
+export function plannedPositionMarketSnapshot(initial: Position, transactions: Transaction[], marketPrice: number, sellFee: Partial<FeeSettings> | undefined = ZERO_FEE): PlannedPositionSnapshot {
+  const applied = applyTransactions(initial, transactions);
+  const validResults = applied.results.filter((result) => result.valid);
+  const finalPosition = applied.finalPosition;
+  const resultingBasis = finalPosition.shares * finalPosition.averagePrice;
+  const marketValue = isFinitePositive(marketPrice) ? finalPosition.shares * marketPrice : 0;
+  return {
+    available: isFinitePositive(marketPrice),
+    reason: isFinitePositive(marketPrice) ? null : 'Enter the current market price to see the after-plan snapshot.',
+    finalPosition,
+    resultingBasis,
+    marketValue,
+    unrealizedProfitLoss: marketValue - resultingBasis - (finalPosition.shares > EPSILON && isFinitePositive(marketPrice) ? feeAmountFor(marketValue, sellFee) : 0),
+    realizedProfitLoss: validResults.reduce((total, result) => total + result.realizedProfitLoss, 0),
+    netPlannedCashFlow: validResults.reduce((total, result) => total + (result.type === 'buy' ? -result.totalAmount : result.netAmount), 0),
+    totalFees: validResults.reduce((total, result) => total + result.feeAmount, 0),
+    results: applied.results,
+  };
 }
 
 export function budgetMaximumQuantity(budget: number, purchasePrice: number, shareStep: number, fee: Partial<FeeSettings> | undefined = ZERO_FEE): number {

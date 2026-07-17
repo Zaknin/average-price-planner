@@ -446,6 +446,23 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   padding: 0 18px;
 }
 
+.field-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.disclosure-content { display: block; }
+.snapshot-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.market-panel .metric-card { min-width: 0; }
+.after-plan-snapshot { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.targets-panel .target-tabs { width: fit-content; margin-bottom: 14px; }
+.target-form { margin-bottom: 12px; }
+.check-field,
+.target-placeholder { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); font-size: 0.78rem; }
+.check-field input { width: 18px; height: 18px; accent-color: var(--green); }
+.compact-target-mode { width: 100%; margin: 0; }
+.compact-target-mode button { min-width: 0; padding-inline: 8px; }
+.data-actions { flex-wrap: wrap; }
+.file-button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; cursor: pointer; }
+.import-preview { display: grid; gap: 7px; margin-top: 14px; padding: 13px; border: 1px solid rgba(16, 163, 127, 0.35); border-radius: 11px; background: var(--green-soft); color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.import-preview strong { color: var(--text-strong); }
+
 @media (max-width: 1080px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -548,6 +565,20 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   .transaction-card-heading .icon-button { min-width: 40px; min-height: 40px; border: 1px solid var(--border); border-radius: 9px; }
   .empty-state { padding: 16px 12px; }
   .disclaimer { padding: 4px 6px; text-align: left; }
+  .snapshot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .market-panel .section-heading .text-button,
+  .targets-panel .section-heading .text-button { min-height: 40px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 9px; white-space: nowrap; }
+  .market-panel .disclosure-content,
+  .targets-panel .disclosure-content { display: none; }
+  .market-panel .disclosure-content.is-expanded,
+  .targets-panel .disclosure-content.is-expanded { display: block; }
+  .field-grid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .target-form .check-field,
+  .target-form .target-placeholder { grid-column: 1 / -1; }
+  .targets-panel .target-tabs { display: grid; width: 100%; }
+  .data-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .data-actions > * { width: 100%; min-width: 0; min-height: 44px; }
+  .import-preview .button-row { display: grid; grid-template-columns: 1fr; }
 }
 
 @media (max-width: 359px) {
@@ -556,7 +587,10 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   .result-strip.four,
   .result-strip.six,
   .scenario-card dl,
-  .transaction-card dl { grid-template-columns: 1fr; }
+  .transaction-card dl,
+  .snapshot-grid,
+  .field-grid.three,
+  .data-actions { grid-template-columns: 1fr; }
   .holding-mobile-summary { grid-template-columns: 1fr; }
   .holding-editor-toggle { width: 100%; }
   .curve-heading { grid-template-columns: 1fr; }

@@ -9,12 +9,24 @@ import {
   quantityForMarginalEfficiencyFloor,
   quantityForTheoreticalCapture,
   roundToShareStep,
+  plannedPositionMarketSnapshot,
+  positionMarketSnapshot,
+  salePriceForTarget,
+  sharesForTargetAverage,
   type Position,
   type FeeSettings,
   type Transaction,
   type TransactionResult,
   type TransactionType,
 } from './calculator';
+import {
+  createBackup,
+  mergeBackupPositions,
+  parseBackupJson,
+  planCsv,
+  type BackupDocument,
+  type BackupPosition,
+} from './data';
 
 type HoldingState = {
   id: string;
@@ -31,11 +43,18 @@ type HoldingState = {
   budgetBenefitTarget: number;
   buyFee: FeeSettings;
   sellFee: FeeSettings;
+  currentMarketPrice: number;
+  targetAverage: number;
+  targetBuyPrice: number;
+  targetRespectBudget: boolean;
+  targetSellShares: number;
+  targetSellMode: 'breakEven' | 'profit' | 'return';
+  targetSellValue: number;
   transactions: Transaction[];
 };
 
 type AppStore = {
-  version: 2;
+  version: 3;
   activeHoldingId: string;
   holdings: HoldingState[];
 };
@@ -65,6 +84,10 @@ let notice = '';
 let store = loadStore();
 let holdingEditorExpanded = false;
 let curveExpanded = false;
+let marketSnapshotExpanded = false;
+let targetsExpanded = false;
+let targetTab: 'average' | 'sell' = 'average';
+let pendingImport: BackupDocument | null = null;
 
 function createId(): string {
   const cryptoObject = globalThis.crypto as Crypto | undefined;
@@ -94,6 +117,13 @@ function createHolding(overrides: Partial<HoldingState> = {}): HoldingState {
     budgetBenefitTarget: 0.8,
     buyFee: { mode: 'percent', value: 0 },
     sellFee: { mode: 'percent', value: 0 },
+    currentMarketPrice: 0,
+    targetAverage: 0,
+    targetBuyPrice: 0,
+    targetRespectBudget: true,
+    targetSellShares: 0,
+    targetSellMode: 'breakEven',
+    targetSellValue: 0,
     transactions: [],
     ...overrides,
   };
@@ -101,6 +131,7 @@ function createHolding(overrides: Partial<HoldingState> = {}): HoldingState {
 
 function normalizeHolding(value: Partial<HoldingState>): HoldingState {
   const defaults = createHolding();
+  const finiteNonNegative = (input: unknown, fallback: number): number => Number.isFinite(Number(input)) && Number(input) >= 0 ? Number(input) : fallback;
   const normalizeFee = (fee: Partial<FeeSettings> | undefined): FeeSettings => ({
     mode: fee?.mode === 'fixed' ? 'fixed' : 'percent',
     value: Number.isFinite(Number(fee?.value)) && Number(fee?.value) >= 0 ? Number(fee?.value) : 0,
@@ -112,8 +143,23 @@ function normalizeHolding(value: Partial<HoldingState>): HoldingState {
     ticker: typeof value.ticker === 'string' ? value.ticker : '',
     currency: typeof value.currency === 'string' && value.currency ? value.currency : 'USD',
     action: value.action === 'sell' ? 'sell' : 'buy',
+    baseShares: finiteNonNegative(value.baseShares, defaults.baseShares),
+    baseAverage: finiteNonNegative(value.baseAverage, defaults.baseAverage),
+    transactionPrice: finiteNonNegative(value.transactionPrice, defaults.transactionPrice),
+    transactionShares: finiteNonNegative(value.transactionShares, defaults.transactionShares),
+    budget: finiteNonNegative(value.budget, defaults.budget),
+    shareStep: Math.max(Number.EPSILON, finiteNonNegative(value.shareStep, defaults.shareStep)),
+    efficiencyFloor: finiteNonNegative(value.efficiencyFloor, defaults.efficiencyFloor),
+    budgetBenefitTarget: finiteNonNegative(value.budgetBenefitTarget, defaults.budgetBenefitTarget),
     buyFee: normalizeFee(value.buyFee),
     sellFee: normalizeFee(value.sellFee),
+    currentMarketPrice: finiteNonNegative(value.currentMarketPrice, 0),
+    targetAverage: finiteNonNegative(value.targetAverage, 0),
+    targetBuyPrice: finiteNonNegative(value.targetBuyPrice, 0),
+    targetRespectBudget: value.targetRespectBudget !== false,
+    targetSellShares: finiteNonNegative(value.targetSellShares, 0),
+    targetSellMode: value.targetSellMode === 'profit' || value.targetSellMode === 'return' ? value.targetSellMode : 'breakEven',
+    targetSellValue: finiteNonNegative(value.targetSellValue, 0),
     transactions: Array.isArray(value.transactions)
       ? value.transactions
           .filter((item): item is Transaction => Boolean(item && isFinitePositive(Number(item.shares)) && isFinitePositive(Number(item.price))))
@@ -152,7 +198,7 @@ function migrateLegacy(raw: string): AppStore | null {
           }))
         : [],
     });
-    return { version: 2, activeHoldingId: holding.id, holdings: [holding] };
+    return { version: 3, activeHoldingId: holding.id, holdings: [holding] };
   } catch {
     return null;
   }
@@ -170,7 +216,7 @@ function loadStore(): AppStore {
         const activeHoldingId = holdings.some((holding) => holding.id === parsed.activeHoldingId)
           ? String(parsed.activeHoldingId)
           : holdings[0]!.id;
-        const migrated = { version: 2 as const, activeHoldingId, holdings };
+        const migrated = { version: 3 as const, activeHoldingId, holdings };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
         return migrated;
       }
@@ -189,7 +235,7 @@ function loadStore(): AppStore {
   }
 
   const holding = createHolding();
-  return { version: 2, activeHoldingId: holding.id, holdings: [holding] };
+  return { version: 3, activeHoldingId: holding.id, holdings: [holding] };
 }
 
 function saveStore(): void {
@@ -231,6 +277,7 @@ function updateHoldingFromInputs(): void {
   holding.shareStep = numberFromInput('shareStep');
   holding.efficiencyFloor = numberFromInput('efficiencyFloor') / 100;
   holding.budgetBenefitTarget = numberFromInput('budgetBenefitTarget') / 100;
+  holding.currentMarketPrice = numberFromInput('currentMarketPrice');
   const activeFee = holding.action === 'buy' ? holding.buyFee : holding.sellFee;
   activeFee.value = numberFromInput('transactionFee');
   saveStore();
@@ -656,6 +703,190 @@ function curveSvg(position: Position, holding: HoldingState): string {
   `;
 }
 
+function marketSnapshotPanel(position: Position | null, holding: HoldingState): string {
+  const snapshot = position
+    ? positionMarketSnapshot(position, holding.currentMarketPrice, holding.sellFee)
+    : positionMarketSnapshot({ shares: 0, averagePrice: 0 }, holding.currentMarketPrice, holding.sellFee);
+  const planned = position
+    ? plannedPositionMarketSnapshot(position, holding.transactions, holding.currentMarketPrice, holding.sellFee)
+    : null;
+  if (!snapshot.available) {
+    return `
+      <section class="panel market-panel">
+        <div class="section-heading compact"><div><span class="eyebrow">Current price</span><h2>Position snapshot</h2></div>
+          <button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button>
+        </div>
+        <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
+          <div class="empty-state compact-empty">${escapeHtml(snapshot.reason ?? 'Enter a current market price to see this snapshot.')}</div>
+        </div>
+      </section>`;
+  }
+  const netTone = snapshot.netUnrealizedProfitLoss >= 0 ? 'positive' : 'negative';
+  return `
+    <section class="panel market-panel">
+      <div class="section-heading compact"><div><span class="eyebrow">Current price</span><h2>Position snapshot</h2></div>
+        <button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button>
+      </div>
+      <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
+        <div class="snapshot-grid">
+          ${metricCard('Current value', formatCurrency(snapshot.marketValue, holding), `${formatQuantity(position!.shares, holding)} shares at ${formatCurrency(holding.currentMarketPrice, holding)}`)}
+          ${metricCard('Total cost basis', formatCurrency(snapshot.basis, holding), `Average ${formatCurrency(position!.averagePrice, holding)}`)}
+          ${metricCard('Gross P/L', formatCurrency(snapshot.grossUnrealizedProfitLoss, holding), `Gross return ${percent(snapshot.grossReturnPercent)}`, '', snapshot.grossUnrealizedProfitLoss >= 0 ? 'positive' : 'negative')}
+          ${metricCard('After fees', formatCurrency(snapshot.netUnrealizedProfitLoss, holding), `Liquidation fee ${formatCurrency(snapshot.estimatedSellFee, holding)} · Net ${formatCurrency(snapshot.netLiquidationValue, holding)}`, '', netTone)}
+          ${metricCard('Break-even price', formatCurrency(snapshot.breakEvenPrice, holding), snapshot.movementToBreakEvenPercent > 0 ? `${percent(snapshot.movementToBreakEvenPercent)} rise required` : snapshot.aboveBreakEvenPercent > 0 ? `${percent(snapshot.aboveBreakEvenPercent)} above break even` : 'At break even')}
+        </div>
+        ${planned && holding.transactions.length ? `
+          <div class="after-plan-snapshot">
+            <span class="eyebrow">After planned transactions</span>
+            <div class="result-strip six">
+              <div><span>Resulting shares</span><strong>${formatQuantity(planned.finalPosition.shares, holding)}</strong></div>
+              <div><span>Resulting average</span><strong>${planned.finalPosition.shares > 0 ? formatCurrency(planned.finalPosition.averagePrice, holding) : 'Closed'}</strong></div>
+              <div><span>Cost basis</span><strong>${formatCurrency(planned.resultingBasis, holding)}</strong></div>
+              <div><span>Unrealized P/L</span><strong class="${planned.unrealizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(planned.unrealizedProfitLoss, holding)}</strong></div>
+              <div><span>Realized P/L</span><strong class="${planned.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(planned.realizedProfitLoss, holding)}</strong></div>
+              <div><span>Plan cash flow / fees</span><strong>${formatCurrency(planned.netPlannedCashFlow, holding)} / ${formatCurrency(planned.totalFees, holding)}</strong></div>
+            </div>
+          </div>` : ''}
+      </div>
+    </section>`;
+}
+
+function targetsPanel(position: Position, holding: HoldingState): string {
+  const averageResult = sharesForTargetAverage(position, {
+    targetAverage: holding.targetAverage,
+    purchasePrice: holding.targetBuyPrice,
+    fee: holding.buyFee,
+    shareStep: holding.shareStep,
+    budget: holding.budget,
+    respectBudget: holding.targetRespectBudget,
+  });
+  const sellShares = holding.targetSellShares > 0 ? holding.targetSellShares : position.shares;
+  const sellResult = salePriceForTarget(position, { shares: sellShares, mode: holding.targetSellMode, targetValue: holding.targetSellValue, fee: holding.sellFee });
+  const averageBody = averageResult.achievable ? `
+    <div class="result-strip six">
+      <div><span>Shares needed</span><strong>${formatQuantity(averageResult.requiredShares, holding)}</strong></div>
+      <div><span>Gross purchase</span><strong>${formatCurrency(averageResult.grossAmount, holding)}</strong></div>
+      <div><span>Fee</span><strong>${formatCurrency(averageResult.feeAmount, holding)}</strong></div>
+      <div><span>Total cash needed</span><strong>${formatCurrency(averageResult.totalAmount, holding)}</strong></div>
+      <div><span>Actual average</span><strong>${formatCurrency(averageResult.resultingPosition.averagePrice, holding)}</strong></div>
+      <div><span>Average lowered</span><strong class="positive">${formatCurrency(averageResult.averageLowered, holding)}</strong></div>
+    </div>
+    <p class="simple-note">Requested target: ${formatCurrency(holding.targetAverage, holding)}. ${averageResult.targetReached ? 'The rounded share amount reaches or improves on it.' : 'Rounding changes the actual resulting average shown above.'}${averageResult.exceedsBudget ? ` This requires ${formatCurrency(averageResult.totalAmount - holding.budget, holding)} more than the configured budget.` : ''}</p>`
+    : `<div class="plain-summary warning-summary"><span>Target result</span><strong>${escapeHtml(averageResult.reason ?? 'This target is not achievable.')}</strong></div>`;
+  const sellBody = sellResult.valid ? `
+    <div class="result-strip six">
+      <div><span>Shares sold</span><strong>${formatQuantity(sellResult.shares, holding)}</strong></div>
+      <div><span>Cost basis sold</span><strong>${formatCurrency(sellResult.costBasisSold, holding)}</strong></div>
+      <div><span>Break-even / target price</span><strong>${formatCurrency(sellResult.requiredPrice, holding)}</strong></div>
+      <div><span>Gross proceeds</span><strong>${formatCurrency(sellResult.grossAmount, holding)}</strong></div>
+      <div><span>Fee / net proceeds</span><strong>${formatCurrency(sellResult.feeAmount, holding)} / ${formatCurrency(sellResult.netAmount, holding)}</strong></div>
+      <div><span>Profit / return</span><strong class="${sellResult.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(sellResult.realizedProfitLoss, holding)} / ${percent(sellResult.returnPercent)}</strong></div>
+    </div>
+    <p class="simple-note">Remaining position: ${formatQuantity(sellResult.remainingPosition.shares, holding)} shares${sellResult.remainingPosition.shares ? ` at ${formatCurrency(sellResult.remainingPosition.averagePrice, holding)} average` : ', closed'}.</p>`
+    : `<div class="plain-summary warning-summary"><span>Sale target</span><strong>${escapeHtml(sellResult.reason ?? 'Enter valid sale details.')}</strong></div>`;
+  return `
+    <section class="panel targets-panel">
+      <div class="section-heading"><div><span class="eyebrow">Targets</span><h2>Plan an average or exit price</h2></div>
+        <button id="toggleTargets" class="text-button" aria-expanded="${targetsExpanded}" aria-controls="targetsContent">${targetsExpanded ? 'Hide targets' : 'Show targets'}</button>
+      </div>
+      <div id="targetsContent" class="disclosure-content ${targetsExpanded ? 'is-expanded' : ''}">
+        <div class="segmented-control target-tabs" aria-label="Target calculator"><button data-target-tab="average" class="${targetTab === 'average' ? 'active' : ''}">Target average</button><button data-target-tab="sell" class="${targetTab === 'sell' ? 'active' : ''}">Break-even / profit</button></div>
+        ${targetTab === 'average' ? `
+          <div class="target-form field-grid three">
+            ${field('targetAverage', 'Target average', holding.targetAverage, 'number', '45')}
+            ${field('targetBuyPrice', 'Buy price', holding.targetBuyPrice, 'number', '40')}
+            <label class="check-field"><input id="targetRespectBudget" type="checkbox" ${holding.targetRespectBudget ? 'checked' : ''} /> Respect maximum budget</label>
+          </div>${averageBody}` : `
+          <div class="target-form field-grid three">
+            ${field('targetSellShares', 'Shares to sell', sellShares, 'number', '100')}
+            <div class="segmented-control compact-target-mode" aria-label="Sale target mode"><button data-target-sell-mode="breakEven" class="${holding.targetSellMode === 'breakEven' ? 'active' : ''}">Break even</button><button data-target-sell-mode="profit" class="${holding.targetSellMode === 'profit' ? 'active' : ''}">Profit</button><button data-target-sell-mode="return" class="${holding.targetSellMode === 'return' ? 'active' : ''}">Return %</button></div>
+            ${holding.targetSellMode === 'breakEven' ? '<div class="target-placeholder">Uses your active sell fee.</div>' : field('targetSellValue', holding.targetSellMode === 'profit' ? 'Profit target' : 'Target return percent', holding.targetSellValue, 'number', holding.targetSellMode === 'profit' ? '500' : '10')}
+          </div>${sellBody}`}
+      </div>
+    </section>`;
+}
+
+function dataManagementPanel(holding: HoldingState): string {
+  const preview = pendingImport ? `<div class="import-preview"><strong>Backup preview</strong><span>${pendingImport.positions.length} position${pendingImport.positions.length === 1 ? '' : 's'} · ${pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0)} planned transactions</span><span>${pendingImport.positions.map((position) => escapeHtml(String(position.ticker || 'Unnamed position'))).join(', ')}</span><span>Exported ${escapeHtml(pendingImport.exportedAt)} · schema ${pendingImport.backupSchemaVersion}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">Merge with current data</button><button id="applyReplaceImport" class="text-button danger-text">Replace all current data</button></div></div>` : '';
+  return `
+    <section class="panel data-panel">
+      <div class="section-heading"><div><span class="eyebrow">Data management</span><h2>Backup, restore, and export</h2></div></div>
+      <p class="helper-text">Everything stays in this browser. Different website origins keep separate browser data.</p>
+      <div class="button-row data-actions"><button id="exportAll" class="secondary-button">Export all positions</button><button id="exportActive" class="secondary-button">Export active position</button><button id="exportCsv" class="secondary-button" ${holding.transactions.length ? '' : 'disabled'}>Export plan CSV</button><label class="secondary-button file-button">Import JSON<input id="importJson" type="file" accept="application/json,.json" hidden /></label></div>
+      ${preview}
+    </section>`;
+}
+
+function dateStamp(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function downloadText(filename: string, content: string, type: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportBackup(scope: 'all' | 'active'): void {
+  const holding = activeHolding();
+  const positions = scope === 'all' ? store.holdings : [holding];
+  const backup = createBackup(positions as unknown as BackupPosition[], scope === 'all' ? store.activeHoldingId : undefined, scope);
+  const prefix = scope === 'active' && holding.ticker ? holding.ticker.replace(/[^A-Z0-9._-]/gi, '').slice(0, 24) : 'average-price-planner';
+  downloadText(`${prefix}-backup-${dateStamp()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
+  notice = `Exported ${positions.length} position${positions.length === 1 ? '' : 's'} as a browser-local backup.`;
+  render();
+}
+
+function exportPlanCsv(): void {
+  const holding = activeHolding();
+  const { results } = effectivePosition(holding);
+  const rows = results.map((result, index) => ({
+    sequence: index + 1,
+    type: result.type,
+    price: result.price,
+    shares: result.shares,
+    grossAmount: result.grossAmount,
+    feeMode: result.feeMode ?? 'percent',
+    feeValue: result.feeValue ?? 0,
+    feeAmount: result.feeAmount,
+    totalPaid: result.type === 'buy' ? result.totalAmount : 0,
+    netReceived: result.type === 'sell' ? result.netAmount : 0,
+    sharesAfter: result.sharesAfter,
+    averageAfter: result.averageAfter,
+    averageChange: result.averageChange,
+    realizedProfitLoss: result.realizedProfitLoss,
+    currency: holding.currency,
+  }));
+  const prefix = (holding.ticker || 'position').replace(/[^A-Z0-9._-]/gi, '').slice(0, 24);
+  downloadText(`${prefix}-plan-${dateStamp()}.csv`, planCsv(rows), 'text/csv;charset=utf-8');
+  notice = `Exported ${rows.length} planned transaction${rows.length === 1 ? '' : 's'} as CSV.`;
+  render();
+}
+
+function applyPendingImport(mode: 'merge' | 'replace'): void {
+  if (!pendingImport) return;
+  if (mode === 'replace' && !window.confirm('Replace all current browser-local positions with this backup? This cannot be undone unless you exported a backup first.')) return;
+  const imported = pendingImport.positions.map((position) => normalizeHolding(position as Partial<HoldingState>));
+  if (mode === 'merge') {
+    const merged = mergeBackupPositions(store.holdings as unknown as BackupPosition[], imported as unknown as BackupPosition[], createId)
+      .map((position) => normalizeHolding(position as Partial<HoldingState>));
+    store.holdings = merged;
+  } else {
+    store.holdings = imported.length ? imported : [createHolding()];
+  }
+  store.activeHoldingId = mode === 'replace' && pendingImport.activeHoldingId && store.holdings.some((holding) => holding.id === pendingImport!.activeHoldingId)
+    ? pendingImport.activeHoldingId
+    : store.holdings[0]!.id;
+  const transactionCount = imported.reduce((total, holding) => total + holding.transactions.length, 0);
+  pendingImport = null;
+  saveStore();
+  notice = `Imported ${imported.length} position${imported.length === 1 ? '' : 's'} and ${transactionCount} planned transaction${transactionCount === 1 ? '' : 's'}.`;
+  render();
+}
+
 function transactionPlan(results: TransactionResult[], holding: HoldingState): string {
   if (holding.transactions.length === 0) {
     return `<div class="empty-state">No planned transactions yet. Test a buy or sale above, then add it here.</div>`;
@@ -808,7 +1039,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner <span class="release-tag">v1.5</span></h1>
+          <h1>Average Price Planner <span class="release-tag">v1.6</span></h1>
           <p>Compare future buys and sales for each holding</p>
         </div>
       </div>
@@ -853,6 +1084,7 @@ function render(): void {
             ${field('currency', 'Currency', holding.currency, 'text', 'USD')}
             ${field('baseShares', 'Shares owned', holding.baseShares, 'number', '48.5')}
             ${field('baseAverage', 'Average buy price', holding.baseAverage, 'number', '189')}
+            ${field('currentMarketPrice', 'Current market price', holding.currentMarketPrice, 'number', '50')}
           </div>
 
           <div class="purchase-settings">
@@ -913,6 +1145,10 @@ function render(): void {
             : `<div class="empty-state">Enter your current shares and average price before testing a transaction.</div>`}
         </section>
 
+        ${marketSnapshotPanel(analyzablePosition, holding)}
+
+        ${analyzablePosition ? targetsPanel(analyzablePosition, holding) : ''}
+
         ${isBuy && analyzablePosition ? `
           <section class="panel">
             <div class="section-heading">
@@ -950,7 +1186,9 @@ function render(): void {
           ${transactionPlan(results, holding)}
         </section>
 
-        <p class="disclaimer">Calculations include the transaction fees you configure, but remain estimates before taxes. Selling does not change average cost under the average-cost method; it realizes a gain or loss on the shares sold.</p>
+        ${dataManagementPanel(holding)}
+
+        <p class="disclaimer">This app performs arithmetic and planning only; it does not assess investment quality. Calculations include the transaction fees you configure, but remain estimates before taxes. Selling does not change average cost under the average-cost method; it realizes a gain or loss on the shares sold.</p>
       </section>
     </main>
   `;
@@ -972,6 +1210,7 @@ function wireEvents(): void {
     'shareStep',
     'efficiencyFloor',
     'budgetBenefitTarget',
+    'currentMarketPrice',
   ];
 
   for (const id of inputIds) {
@@ -1012,6 +1251,55 @@ function wireEvents(): void {
     render();
   });
 
+  document.querySelector<HTMLButtonElement>('#toggleMarketSnapshot')?.addEventListener('click', () => {
+    marketSnapshotExpanded = !marketSnapshotExpanded;
+    render();
+  });
+
+  document.querySelector<HTMLButtonElement>('#toggleTargets')?.addEventListener('click', () => {
+    targetsExpanded = !targetsExpanded;
+    render();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-target-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      targetTab = button.dataset.targetTab === 'sell' ? 'sell' : 'average';
+      targetsExpanded = true;
+      render();
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-target-sell-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeHolding().targetSellMode = button.dataset.targetSellMode === 'profit' ? 'profit' : button.dataset.targetSellMode === 'return' ? 'return' : 'breakEven';
+      targetsExpanded = true;
+      saveStore();
+      render();
+    });
+  });
+
+  ['targetAverage', 'targetBuyPrice', 'targetSellShares', 'targetSellValue'].forEach((id) => {
+    document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('input', (event) => {
+      const holding = activeHolding();
+      const value = Number((event.currentTarget as HTMLInputElement).value);
+      if (id === 'targetAverage') holding.targetAverage = value;
+      if (id === 'targetBuyPrice') holding.targetBuyPrice = value;
+      if (id === 'targetSellShares') holding.targetSellShares = value;
+      if (id === 'targetSellValue') holding.targetSellValue = value;
+      saveStore();
+    });
+    document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('change', () => {
+      targetsExpanded = true;
+      render();
+    });
+  });
+  document.querySelector<HTMLInputElement>('#targetRespectBudget')?.addEventListener('change', (event) => {
+    activeHolding().targetRespectBudget = (event.currentTarget as HTMLInputElement).checked;
+    targetsExpanded = true;
+    saveStore();
+    render();
+  });
+
   document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((button) => {
     button.addEventListener('click', () => {
       activeHolding().action = button.dataset.action === 'sell' ? 'sell' : 'buy';
@@ -1027,6 +1315,25 @@ function wireEvents(): void {
       render();
     });
   });
+
+  document.querySelector<HTMLButtonElement>('#exportAll')?.addEventListener('click', () => exportBackup('all'));
+  document.querySelector<HTMLButtonElement>('#exportActive')?.addEventListener('click', () => exportBackup('active'));
+  document.querySelector<HTMLButtonElement>('#exportCsv')?.addEventListener('click', () => exportPlanCsv());
+  document.querySelector<HTMLInputElement>('#importJson')?.addEventListener('change', async (event) => {
+    const file = (event.currentTarget as HTMLInputElement).files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error('Import rejected: backup files must be 5 MB or smaller.');
+      pendingImport = parseBackupJson(await file.text());
+      notice = 'Backup checked. Review the preview before applying it.';
+    } catch (error) {
+      pendingImport = null;
+      notice = error instanceof Error ? error.message : 'Import rejected: the selected backup could not be read.';
+    }
+    render();
+  });
+  document.querySelector<HTMLButtonElement>('#applyMergeImport')?.addEventListener('click', () => applyPendingImport('merge'));
+  document.querySelector<HTMLButtonElement>('#applyReplaceImport')?.addEventListener('click', () => applyPendingImport('replace'));
 
   document.querySelector<HTMLButtonElement>('#newHolding')?.addEventListener('click', () => {
     updateHoldingFromInputs();

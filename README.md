@@ -2,6 +2,17 @@
 
 A browser-local planner for stock purchases, average-down analysis, future sales, and multiple saved holdings.
 
+## Version 1.6.0
+
+This release adds fee-aware target tools and browser-local data portability while preserving the completed desktop and mobile layouts.
+
+- **Target average** works backward from a target average, buy price, Buy fee, share increment, and optional budget limit to show the shares and cash required. Rounded share quantities always show the resulting actual average.
+- **Break-even and profit targets** calculate the required sale price for a break-even, currency-profit, or percentage-return goal after the saved Sell fee. They do not change the holding.
+- **Current market snapshot** shows gross and after-fee liquidation values, unrealized profit/loss, fee-aware break-even, and a clearly separated after-plan snapshot for realized versus unrealized results.
+- **Browser-local JSON backup and restore** supports active-position or all-position exports, preview-before-import, collision-safe merge, explicit-confirmation replace, and validation before any saved data changes.
+- **CSV plan export** produces a UTF-8, spreadsheet-safe transaction-plan file with fee, cash-flow, average, and realized P/L details.
+- Existing v1.5 browser data migrates automatically to the internal v3 schema, keeping positions, plans, and Buy/Sell fees unchanged. Browser storage remains private to each origin, so Docker and GitHub Pages data remain separate.
+
 ## Version 1.5.0
 
 This release adds fee-aware buy and sell planning without changing browser-local storage or the completed responsive mobile design.
@@ -107,7 +118,7 @@ For a buy, the new average is the weighted average of existing and newly purchas
 For a sale under average-cost accounting:
 
 - Remaining shares keep the same average cost.
-- Estimated realized profit/loss is `(sale price - average cost) × shares sold`.
-- Commissions and taxes are not included.
+- Estimated realized profit/loss is net proceeds after the configured Sell fee minus the average-cost basis of the shares sold.
+- Configured Buy and Sell fees are included; taxes and other unconfigured costs are not.
 
 The optimizer measures average-price mechanics only. It does not assess investment quality, risk, valuation, concentration, or likelihood of recovery.
