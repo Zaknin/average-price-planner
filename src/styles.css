@@ -260,6 +260,23 @@ h1, h2, h3, p { margin: 0; }
   align-items: end;
   gap: 12px;
 }
+.transaction-entry > .primary-button { grid-column: 1 / -1; justify-self: start; }
+.fee-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(190px, auto) minmax(150px, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--surface-soft);
+}
+.fee-controls-label { color: var(--muted); font-size: 0.75rem; font-weight: 650; padding-bottom: 12px; }
+.fee-mode-control { margin: 0; }
+.fee-mode-control button { min-width: 76px; }
+.fee-controls .field { min-width: 0; }
+.fee-preview { min-width: 0; color: var(--muted); font-size: 0.73rem; line-height: 1.4; padding-bottom: 12px; overflow-wrap: anywhere; }
 
 .plain-summary {
   display: grid;
@@ -292,6 +309,7 @@ h1, h2, h3, p { margin: 0; }
   background: var(--border);
 }
 .result-strip.four { grid-template-columns: repeat(4, minmax(125px, 1fr)); }
+.result-strip.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .result-strip > div { display: grid; gap: 6px; padding: 14px; background: var(--bg-deep); }
 .result-strip span { color: var(--muted-dark); font-size: 0.7rem; line-height: 1.35; }
 .result-strip strong { font-size: 0.94rem; color: var(--text); }
@@ -482,11 +500,18 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   .segmented-control button { min-height: 44px; min-width: 0; }
   .transaction-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .transaction-entry .primary-button { grid-column: 1 / -1; min-height: 46px; width: 100%; }
+  .fee-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; }
+  .fee-controls-label { grid-column: 1 / -1; padding-bottom: 0; }
+  .fee-mode-control { width: 100%; }
+  .fee-mode-control button { min-width: 0; }
+  .fee-controls .field { grid-column: 1 / -1; }
+  .fee-preview { grid-column: 1 / -1; padding-bottom: 0; }
   .plain-summary { gap: 6px; margin-top: 12px; padding: 12px; }
   .plain-summary strong { font-size: 0.89rem; line-height: 1.4; }
   .plain-summary p { font-size: 0.76rem; line-height: 1.45; }
   .result-strip { margin-top: 10px; }
   .result-strip.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .result-strip.six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .result-strip > div { min-width: 0; gap: 4px; padding: 11px; }
   .result-strip span { font-size: 0.65rem; overflow-wrap: anywhere; }
   .result-strip strong { font-size: 0.86rem; overflow-wrap: anywhere; }
@@ -529,6 +554,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   .transaction-entry,
   .holding-editor .field-grid.two,
   .result-strip.four,
+  .result-strip.six,
   .scenario-card dl,
   .transaction-card dl { grid-template-columns: 1fr; }
   .holding-mobile-summary { grid-template-columns: 1fr; }

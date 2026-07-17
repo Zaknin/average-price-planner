@@ -10,6 +10,7 @@ import {
   quantityForTheoreticalCapture,
   roundToShareStep,
   type Position,
+  type FeeSettings,
   type Transaction,
   type TransactionResult,
   type TransactionType,
@@ -28,6 +29,8 @@ type HoldingState = {
   shareStep: number;
   efficiencyFloor: number;
   budgetBenefitTarget: number;
+  buyFee: FeeSettings;
+  sellFee: FeeSettings;
   transactions: Transaction[];
 };
 
@@ -89,6 +92,8 @@ function createHolding(overrides: Partial<HoldingState> = {}): HoldingState {
     shareStep: 1,
     efficiencyFloor: 0.25,
     budgetBenefitTarget: 0.8,
+    buyFee: { mode: 'percent', value: 0 },
+    sellFee: { mode: 'percent', value: 0 },
     transactions: [],
     ...overrides,
   };
@@ -96,6 +101,10 @@ function createHolding(overrides: Partial<HoldingState> = {}): HoldingState {
 
 function normalizeHolding(value: Partial<HoldingState>): HoldingState {
   const defaults = createHolding();
+  const normalizeFee = (fee: Partial<FeeSettings> | undefined): FeeSettings => ({
+    mode: fee?.mode === 'fixed' ? 'fixed' : 'percent',
+    value: Number.isFinite(Number(fee?.value)) && Number(fee?.value) >= 0 ? Number(fee?.value) : 0,
+  });
   return {
     ...defaults,
     ...value,
@@ -103,6 +112,8 @@ function normalizeHolding(value: Partial<HoldingState>): HoldingState {
     ticker: typeof value.ticker === 'string' ? value.ticker : '',
     currency: typeof value.currency === 'string' && value.currency ? value.currency : 'USD',
     action: value.action === 'sell' ? 'sell' : 'buy',
+    buyFee: normalizeFee(value.buyFee),
+    sellFee: normalizeFee(value.sellFee),
     transactions: Array.isArray(value.transactions)
       ? value.transactions
           .filter((item): item is Transaction => Boolean(item && isFinitePositive(Number(item.shares)) && isFinitePositive(Number(item.price))))
@@ -111,6 +122,8 @@ function normalizeHolding(value: Partial<HoldingState>): HoldingState {
             type: item.type === 'sell' ? 'sell' : 'buy',
             shares: Number(item.shares),
             price: Number(item.price),
+            feeMode: item.feeMode === 'fixed' ? 'fixed' : 'percent',
+            feeValue: Number.isFinite(Number(item.feeValue)) && Number(item.feeValue) >= 0 ? Number(item.feeValue) : 0,
           }))
       : [],
   };
@@ -157,7 +170,9 @@ function loadStore(): AppStore {
         const activeHoldingId = holdings.some((holding) => holding.id === parsed.activeHoldingId)
           ? String(parsed.activeHoldingId)
           : holdings[0]!.id;
-        return { version: 2, activeHoldingId, holdings };
+        const migrated = { version: 2 as const, activeHoldingId, holdings };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+        return migrated;
       }
     }
 
@@ -216,7 +231,17 @@ function updateHoldingFromInputs(): void {
   holding.shareStep = numberFromInput('shareStep');
   holding.efficiencyFloor = numberFromInput('efficiencyFloor') / 100;
   holding.budgetBenefitTarget = numberFromInput('budgetBenefitTarget') / 100;
+  const activeFee = holding.action === 'buy' ? holding.buyFee : holding.sellFee;
+  activeFee.value = numberFromInput('transactionFee');
   saveStore();
+}
+
+function activeFee(holding = activeHolding()): FeeSettings {
+  return holding.action === 'buy' ? holding.buyFee : holding.sellFee;
+}
+
+function feeLabel(fee: FeeSettings, holding = activeHolding()): string {
+  return fee.mode === 'percent' ? `${fee.value}%` : `Fixed ${formatCurrency(fee.value, holding)}`;
 }
 
 function formatCurrency(value: number, holding = activeHolding()): string {
@@ -317,6 +342,11 @@ function transactionSummary(position: Position, holding: HoldingState): string {
     return `<div class="empty-state compact-empty">Enter a price and number of shares to see the result.</div>`;
   }
 
+  const fee = activeFee(holding);
+  if (fee.value < 0 || !Number.isFinite(fee.value)) {
+    return `<div class="plain-summary warning-summary"><span>Fee input</span><strong>Enter a fee of zero or greater.</strong></div>`;
+  }
+
   if (holding.action === 'sell') {
     if (holding.transactionShares > position.shares) {
       return `
@@ -333,18 +363,21 @@ function transactionSummary(position: Position, holding: HoldingState): string {
       type: 'sell',
       price: holding.transactionPrice,
       shares: holding.transactionShares,
+      feeMode: fee.mode,
+      feeValue: fee.value,
     });
     const gainOrLoss = result.realizedProfitLoss >= 0 ? 'estimated gain' : 'estimated loss';
     return `
       <div class="plain-summary">
         <span>Quick answer</span>
-        <strong>Selling ${formatQuantity(result.shares)} shares at ${formatCurrency(result.price)} leaves ${formatQuantity(result.sharesAfter)} shares.</strong>
-        <p>You receive ${formatCurrency(result.grossAmount)} before fees. Your average cost stays ${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'closed'}, with an ${gainOrLoss} of ${formatCurrency(Math.abs(result.realizedProfitLoss))}.</p>
+        <strong>Selling ${formatQuantity(result.shares)} shares at ${formatCurrency(result.price)} with a ${formatCurrency(result.feeAmount)} fee produces ${formatCurrency(result.netAmount)} net proceeds.</strong>
+        <p>Your average cost stays ${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'closed'}, with an ${gainOrLoss} of ${formatCurrency(Math.abs(result.realizedProfitLoss))}.</p>
+        ${result.warning ? `<p class="negative">${escapeHtml(result.warning)}</p>` : ''}
       </div>
     `;
   }
 
-  const analysis = analyzePurchase(position, holding.transactionShares, holding.transactionPrice);
+  const analysis = analyzePurchase(position, holding.transactionShares, holding.transactionPrice, fee);
   const before = formatCurrency(position.averagePrice);
   const after = formatCurrency(analysis.newAverage);
 
@@ -352,8 +385,8 @@ function transactionSummary(position: Position, holding: HoldingState): string {
     return `
       <div class="plain-summary">
         <span>Quick answer</span>
-        <strong>Buying ${formatQuantity(analysis.quantity)} shares at ${formatCurrency(holding.transactionPrice)} lowers your average from ${before} to ${after}.</strong>
-        <p>You spend ${formatCurrency(analysis.cost)}. Your average falls by ${formatCurrency(analysis.reduction)} (${percent(analysis.reductionPercent)}).</p>
+        <strong>Buying ${formatQuantity(analysis.quantity)} shares at ${formatCurrency(holding.transactionPrice)} with a ${formatCurrency(analysis.feeAmount)} fee costs ${formatCurrency(analysis.totalCost)} in total.</strong>
+        <p>Your average moves from ${before} to ${after}, a decrease of ${formatCurrency(analysis.reduction)} (${percent(analysis.reductionPercent)}).</p>
       </div>
     `;
   }
@@ -363,7 +396,7 @@ function transactionSummary(position: Position, holding: HoldingState): string {
       <div class="plain-summary warning-summary">
         <span>Quick answer</span>
         <strong>This purchase raises your average from ${before} to ${after}.</strong>
-        <p>The proposed buy price is above your current average. The purchase costs ${formatCurrency(analysis.cost)}.</p>
+        <p>The proposed buy price is above your current average. The total cash required is ${formatCurrency(analysis.totalCost)}.</p>
       </div>
     `;
   }
@@ -372,7 +405,7 @@ function transactionSummary(position: Position, holding: HoldingState): string {
     <div class="plain-summary">
       <span>Quick answer</span>
       <strong>This purchase leaves your average unchanged at ${before}.</strong>
-      <p>The purchase costs ${formatCurrency(analysis.cost)}.</p>
+      <p>The total cash required is ${formatCurrency(analysis.totalCost)}.</p>
     </div>
   `;
 }
@@ -380,6 +413,8 @@ function transactionSummary(position: Position, holding: HoldingState): string {
 function resultStrip(position: Position, holding: HoldingState): string {
   if (!isFinitePositive(holding.transactionPrice) || !isFinitePositive(holding.transactionShares)) return '';
 
+  const fee = activeFee(holding);
+  if (fee.value < 0 || !Number.isFinite(fee.value)) return '';
   if (holding.action === 'sell') {
     if (holding.transactionShares > position.shares) return '';
     const result = applyTransaction(position, {
@@ -387,32 +422,39 @@ function resultStrip(position: Position, holding: HoldingState): string {
       type: 'sell',
       price: holding.transactionPrice,
       shares: holding.transactionShares,
+      feeMode: fee.mode,
+      feeValue: fee.value,
     });
     const pnlClass = result.realizedProfitLoss >= 0 ? 'positive' : 'negative';
     return `
-      <div class="result-strip four">
+      <div class="result-strip six">
+        <div><span>Gross sale</span><strong>${formatCurrency(result.grossAmount)}</strong></div>
+        <div><span>Fee</span><strong>${formatCurrency(result.feeAmount)}</strong></div>
+        <div><span>Net proceeds</span><strong>${formatCurrency(result.netAmount)}</strong></div>
         <div><span>Shares left</span><strong>${formatQuantity(result.sharesAfter)}</strong></div>
         <div><span>Average cost</span><strong>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'Position closed'}</strong></div>
-        <div><span>Cash received</span><strong>${formatCurrency(result.grossAmount)}</strong></div>
         <div><span>Estimated realized P/L</span><strong class="${pnlClass}">${formatCurrency(result.realizedProfitLoss)}</strong></div>
       </div>
       <p class="simple-note">Selling shares does not change the average cost of the shares you keep. It only reduces the share count and realizes a gain or loss.</p>
     `;
   }
 
-  const analysis = analyzePurchase(position, holding.transactionShares, holding.transactionPrice);
+  const analysis = analyzePurchase(position, holding.transactionShares, holding.transactionPrice, fee);
   return `
-    <div class="result-strip four">
+    <div class="result-strip six">
+      <div><span>Gross purchase</span><strong>${formatCurrency(analysis.grossAmount)}</strong></div>
+      <div><span>Fee</span><strong>${formatCurrency(analysis.feeAmount)}</strong></div>
+      <div><span>Total cash</span><strong>${formatCurrency(analysis.totalCost)}</strong></div>
+      <div><span>New share count</span><strong>${formatQuantity(position.shares + analysis.quantity)}</strong></div>
       <div><span>New average</span><strong>${formatCurrency(analysis.newAverage)}</strong></div>
-      <div><span>Average changes by</span><strong class="${analysis.reduction > 0 ? 'positive' : analysis.newAverage > position.averagePrice ? 'negative' : ''}">${analysis.reduction > 0 ? `−${formatCurrency(analysis.reduction)}` : formatCurrency(analysis.newAverage - position.averagePrice)}</strong></div>
-      <div><span>Purchase cost</span><strong>${formatCurrency(analysis.cost)}</strong></div>
-      <div><span>Total shares after</span><strong>${formatQuantity(position.shares + analysis.quantity)}</strong></div>
+      <div><span>Average change</span><strong class="${analysis.reduction > 0 ? 'positive' : analysis.newAverage > position.averagePrice ? 'negative' : ''}">${analysis.reduction > 0 ? `−${formatCurrency(analysis.reduction)}` : formatCurrency(analysis.newAverage - position.averagePrice)}</strong></div>
     </div>
   `;
 }
 
 function optimizerCards(position: Position, holding: HoldingState): string {
   const price = holding.transactionPrice;
+  const fee = holding.buyFee;
   const step = isFinitePositive(holding.shareStep) ? holding.shareStep : 1;
   if (!isFinitePositive(price)) {
     return `<div class="empty-state">Enter a buy price to see useful purchase-size reference points.</div>`;
@@ -424,15 +466,15 @@ function optimizerCards(position: Position, holding: HoldingState): string {
 
   const floor = Math.min(0.99, Math.max(0.01, holding.efficiencyFloor));
   const floorQty = roundToShareStep(quantityForMarginalEfficiencyFloor(position.shares, floor), step, 'round');
-  const floorPoint = analyzePurchase(position, Math.max(step, floorQty), price);
+  const floorPoint = analyzePurchase(position, Math.max(step, floorQty), price, fee);
   const halfQty = roundToShareStep(quantityForTheoreticalCapture(position.shares, 0.5), step, 'ceil');
-  const halfPoint = analyzePurchase(position, halfQty, price);
-  const maxBudgetQty = budgetMaximumQuantity(holding.budget, price, step);
+  const halfPoint = analyzePurchase(position, halfQty, price, fee);
+  const maxBudgetQty = budgetMaximumQuantity(holding.budget, price, step, fee);
   const efficientQty = maxBudgetQty > 0
     ? budgetEfficientQuantity(position.shares, maxBudgetQty, holding.budgetBenefitTarget, step)
     : 0;
-  const budgetPoint = efficientQty > 0 ? analyzePurchase(position, efficientQty, price) : null;
-  const fullBudgetPoint = maxBudgetQty > 0 ? analyzePurchase(position, maxBudgetQty, price) : null;
+  const budgetPoint = efficientQty > 0 ? analyzePurchase(position, efficientQty, price, fee) : null;
+  const fullBudgetPoint = maxBudgetQty > 0 ? analyzePurchase(position, maxBudgetQty, price, fee) : null;
 
   return `
     <div class="optimizer-grid">
@@ -440,25 +482,25 @@ function optimizerCards(position: Position, holding: HoldingState): string {
         'Useful stopping reference',
         `${formatQuantity(floorPoint.quantity)} shares`,
         `After this purchase, each extra share is only ${percent(floorPoint.marginalEfficiencyRemaining * 100)} as effective as the first one.`,
-        `Spend ${formatCurrency(floorPoint.cost)} · New average ${formatCurrency(floorPoint.newAverage)}`,
+        `Gross ${formatCurrency(floorPoint.grossAmount)} · Fee ${formatCurrency(floorPoint.feeAmount)} · Total ${formatCurrency(floorPoint.totalCost)} · New average ${formatCurrency(floorPoint.newAverage)}`,
       )}
       ${metricCard(
         'Half of the possible drop',
         `${formatQuantity(halfPoint.quantity)} shares`,
         `This moves your average halfway from ${formatCurrency(position.averagePrice)} toward the ${formatCurrency(price)} buy price.`,
-        `Spend ${formatCurrency(halfPoint.cost)} · New average ${formatCurrency(halfPoint.newAverage)}`,
+        `Gross ${formatCurrency(halfPoint.grossAmount)} · Fee ${formatCurrency(halfPoint.feeAmount)} · Total ${formatCurrency(halfPoint.totalCost)} · New average ${formatCurrency(halfPoint.newAverage)}`,
       )}
       ${budgetPoint && fullBudgetPoint
         ? metricCard(
             'Smaller efficient buy',
             `${formatQuantity(budgetPoint.quantity)} shares`,
             `This captures ${percent(holding.budgetBenefitTarget * 100, 0)} of the lowering you would get by spending your full budget.`,
-            `Spend ${formatCurrency(budgetPoint.cost)} · Keep ${formatCurrency(fullBudgetPoint.cost - budgetPoint.cost)} unspent`,
+            `Gross ${formatCurrency(budgetPoint.grossAmount)} · Fee ${formatCurrency(budgetPoint.feeAmount)} · Total ${formatCurrency(budgetPoint.totalCost)} · Keep ${formatCurrency(fullBudgetPoint.totalCost - budgetPoint.totalCost)} unspent`,
           )
         : metricCard(
             'Budget comparison',
             'Set a budget',
-            'Enter a budget to compare a smaller efficient purchase with spending the full amount.',
+            fee.mode === 'fixed' && fee.value >= holding.budget ? 'The fixed buy fee uses the full budget, so no purchase is affordable.' : 'Enter a budget to compare a smaller efficient purchase with spending the full amount.',
           )}
     </div>
   `;
@@ -466,6 +508,7 @@ function optimizerCards(position: Position, holding: HoldingState): string {
 
 function scenarioTable(position: Position, holding: HoldingState): string {
   const price = holding.transactionPrice;
+  const fee = holding.buyFee;
   const step = isFinitePositive(holding.shareStep) ? holding.shareStep : 1;
   if (!isFinitePositive(price) || price >= position.averagePrice) return '';
 
@@ -474,7 +517,7 @@ function scenarioTable(position: Position, holding: HoldingState): string {
     step,
     'round',
   );
-  const budgetQty = budgetMaximumQuantity(holding.budget, price, step);
+  const budgetQty = budgetMaximumQuantity(holding.budget, price, step, fee);
   const candidates = new Set<number>([
     roundToShareStep(position.shares * 0.1, step, 'ceil'),
     roundToShareStep(position.shares * 0.25, step, 'ceil'),
@@ -487,15 +530,18 @@ function scenarioTable(position: Position, holding: HoldingState): string {
   const values = [...candidates]
     .filter((value) => value > 0)
     .sort((a, b) => a - b)
-    .map((candidate) => analyzePurchase(position, candidate, price));
+    .map((candidate) => analyzePurchase(position, candidate, price, fee));
 
   const scenarioCards = values.map((item) => `
     <article class="scenario-card">
       <div class="scenario-card-heading">
         <strong>${formatQuantity(item.quantity)} shares</strong>
-        <span>${formatCurrency(item.cost)}</span>
+        <span>Total ${formatCurrency(item.totalCost)}</span>
       </div>
       <dl>
+        <div><dt>Gross</dt><dd>${formatCurrency(item.grossAmount)}</dd></div>
+        <div><dt>Fee</dt><dd>${formatCurrency(item.feeAmount)} (${feeLabel(fee, holding)})</dd></div>
+        <div><dt>Total required</dt><dd>${formatCurrency(item.totalCost)}</dd></div>
         <div><dt>New average</dt><dd>${formatCurrency(item.newAverage)}</dd></div>
         <div><dt>Average lowered</dt><dd class="positive">${formatCurrency(item.reduction)} (${percent(item.reductionPercent)})</dd></div>
         <div><dt>Possible drop</dt><dd>${percent(item.theoreticalReductionCaptured * 100)}</dd></div>
@@ -510,7 +556,9 @@ function scenarioTable(position: Position, holding: HoldingState): string {
         <thead>
           <tr>
             <th>Shares</th>
-            <th>Cost</th>
+            <th>Gross</th>
+            <th>Fee</th>
+            <th>Total</th>
             <th>New average</th>
             <th>Average falls by</th>
             <th>Possible drop reached</th>
@@ -521,7 +569,9 @@ function scenarioTable(position: Position, holding: HoldingState): string {
           ${values.map((item) => `
             <tr>
               <td>${formatQuantity(item.quantity)}</td>
-              <td>${formatCurrency(item.cost)}</td>
+              <td>${formatCurrency(item.grossAmount)}</td>
+              <td>${formatCurrency(item.feeAmount)}</td>
+              <td>${formatCurrency(item.totalCost)}</td>
               <td>${formatCurrency(item.newAverage)}</td>
               <td class="positive">${formatCurrency(item.reduction)} (${percent(item.reductionPercent)})</td>
               <td>${percent(item.theoreticalReductionCaptured * 100)}</td>
@@ -537,10 +587,11 @@ function scenarioTable(position: Position, holding: HoldingState): string {
 
 function curveSvg(position: Position, holding: HoldingState): string {
   const price = holding.transactionPrice;
+  const fee = holding.buyFee;
   if (!isFinitePositive(price) || price >= position.averagePrice) return '';
 
   const step = isFinitePositive(holding.shareStep) ? holding.shareStep : 1;
-  const budgetQty = budgetMaximumQuantity(holding.budget, price, step);
+  const budgetQty = budgetMaximumQuantity(holding.budget, price, step, fee);
   const floorQty = quantityForMarginalEfficiencyFloor(
     position.shares,
     Math.min(0.99, Math.max(0.01, holding.efficiencyFloor)),
@@ -556,14 +607,17 @@ function curveSvg(position: Position, holding: HoldingState): string {
 
   for (let i = 0; i <= 80; i += 1) {
     const x = (xMax * i) / 80;
-    const y = x / (position.shares + x);
+    const point = x > 0 ? analyzePurchase(position, x, price, fee) : null;
+    const y = point && point.maximumPossibleReduction > 0
+      ? Math.max(0, Math.min(1, point.reduction / point.maximumPossibleReduction))
+      : 0;
     const sx = padX + (x / xMax) * plotW;
     const sy = padY + (1 - y) * plotH;
     points.push(`${sx.toFixed(2)},${sy.toFixed(2)}`);
   }
 
   const markerQty = Math.max(step, roundToShareStep(floorQty, step, 'round'));
-  const marker = analyzePurchase(position, markerQty, price);
+  const marker = analyzePurchase(position, markerQty, price, fee);
   const markerX = padX + (markerQty / xMax) * plotW;
   const markerY = padY + (1 - marker.theoreticalReductionCaptured) * plotH;
 
@@ -631,7 +685,9 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
         <dl>
           <div><dt>Price</dt><dd>${formatCurrency(result.price, holding)}</dd></div>
           <div><dt>Shares</dt><dd>${formatQuantity(result.shares, holding)}</dd></div>
-          <div><dt>Cash</dt><dd>${result.type === 'buy' ? '−' : '+'}${formatCurrency(result.grossAmount, holding)}</dd></div>
+          <div><dt>Gross</dt><dd>${formatCurrency(result.grossAmount, holding)}</dd></div>
+          <div><dt>Fee</dt><dd>${formatCurrency(result.feeAmount, holding)} (${feeLabel({ mode: result.feeMode ?? 'percent', value: result.feeValue ?? 0 }, holding)})</dd></div>
+          <div><dt>${result.type === 'buy' ? 'Total paid' : 'Net received'}</dt><dd>${formatCurrency(result.type === 'buy' ? result.totalAmount : result.netAmount, holding)}</dd></div>
           <div><dt>Shares after</dt><dd>${formatQuantity(result.sharesAfter, holding)}</dd></div>
           <div><dt>Average after</dt><dd>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter, holding) : 'Closed'}</dd></div>
           <div><dt>Result</dt><dd class="${resultClass}">${escapeHtml(resultText)}</dd></div>
@@ -649,7 +705,9 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
             <th>Action</th>
             <th>Price</th>
             <th>Shares</th>
-            <th>Cash</th>
+            <th>Gross</th>
+            <th>Fee</th>
+            <th>Total / Net</th>
             <th>Shares after</th>
             <th>Average after</th>
             <th>Result</th>
@@ -665,6 +723,8 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
                   <td>${result.type === 'buy' ? 'Buy' : 'Sell'}</td>
                   <td>${formatCurrency(result.price)}</td>
                   <td>${formatQuantity(result.shares)}</td>
+                  <td>—</td>
+                  <td>—</td>
                   <td>—</td>
                   <td>${formatQuantity(result.sharesAfter)}</td>
                   <td>${formatCurrency(result.averageAfter)}</td>
@@ -691,7 +751,9 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
                 <td><span class="action-tag ${result.type}">${result.type === 'buy' ? 'Buy' : 'Sell'}</span></td>
                 <td>${formatCurrency(result.price)}</td>
                 <td>${formatQuantity(result.shares)}</td>
-                <td>${result.type === 'buy' ? `−${formatCurrency(result.grossAmount)}` : `+${formatCurrency(result.grossAmount)}`}</td>
+              <td>${formatCurrency(result.grossAmount)}</td>
+              <td>${formatCurrency(result.feeAmount)} (${feeLabel({ mode: result.feeMode ?? 'percent', value: result.feeValue ?? 0 })})</td>
+              <td>${formatCurrency(result.type === 'buy' ? result.totalAmount : result.netAmount)}</td>
                 <td>${formatQuantity(result.sharesAfter)}</td>
                 <td>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'Closed'}</td>
                 <td class="${resultClass}">${resultText}</td>
@@ -731,10 +793,13 @@ function render(): void {
     : null;
   const tickerLabel = escapeHtml(holding.ticker || 'this position');
   const isBuy = holding.action === 'buy';
+  const transactionFee = activeFee(holding);
   const validTransaction = Boolean(
     analyzablePosition
       && isFinitePositive(holding.transactionPrice)
       && isFinitePositive(holding.transactionShares)
+      && Number.isFinite(transactionFee.value)
+      && transactionFee.value >= 0
       && (isBuy || holding.transactionShares <= analyzablePosition.shares),
   );
 
@@ -743,7 +808,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner <span class="release-tag">v1.4</span></h1>
+          <h1>Average Price Planner <span class="release-tag">v1.5</span></h1>
           <p>Compare future buys and sales for each holding</p>
         </div>
       </div>
@@ -831,6 +896,15 @@ function render(): void {
           <div class="transaction-entry">
             ${field('transactionPrice', `${isBuy ? 'Buy' : 'Sell'} price per share`, holding.transactionPrice, 'number', '147', 'any', `${isBuy ? 'Buy' : 'Sell'} price`)}
             ${field('transactionShares', `Shares to ${isBuy ? 'buy' : 'sell'}`, holding.transactionShares, 'number', '4', 'any', 'Shares')}
+            <div class="fee-controls" aria-label="${isBuy ? 'Buy' : 'Sell'} transaction fee">
+              <span class="fee-controls-label">Fee</span>
+              <div class="segmented-control fee-mode-control" aria-label="Fee mode">
+                <button type="button" data-fee-mode="percent" class="${transactionFee.mode === 'percent' ? 'active' : ''}">Percent</button>
+                <button type="button" data-fee-mode="fixed" class="${transactionFee.mode === 'fixed' ? 'active' : ''}">Fixed</button>
+              </div>
+              ${field('transactionFee', transactionFee.mode === 'percent' ? 'Fee percent' : 'Fixed fee', transactionFee.value, 'number', '0', '0.01', transactionFee.mode === 'percent' ? 'Fee %' : 'Fee')}
+              <span class="fee-preview">${feeLabel(transactionFee)} · ${isFinitePositive(holding.transactionPrice) && isFinitePositive(holding.transactionShares) ? `Fee ${formatCurrency(transactionFee.mode === 'percent' ? holding.transactionPrice * holding.transactionShares * transactionFee.value / 100 : transactionFee.value)}` : 'Enter price and shares'}</span>
+            </div>
             <button id="addTransaction" class="primary-button" ${validTransaction ? '' : 'disabled'}>Add ${isBuy ? 'buy' : 'sale'} to plan</button>
           </div>
 
@@ -893,6 +967,7 @@ function wireEvents(): void {
     'baseAverage',
     'transactionPrice',
     'transactionShares',
+    'transactionFee',
     'budget',
     'shareStep',
     'efficiencyFloor',
@@ -940,6 +1015,14 @@ function wireEvents(): void {
   document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((button) => {
     button.addEventListener('click', () => {
       activeHolding().action = button.dataset.action === 'sell' ? 'sell' : 'buy';
+      saveStore();
+      render();
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-fee-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      activeFee().mode = button.dataset.feeMode === 'fixed' ? 'fixed' : 'percent';
       saveStore();
       render();
     });
@@ -1002,6 +1085,12 @@ function wireEvents(): void {
       render();
       return;
     }
+    const fee = activeFee(holding);
+    if (!Number.isFinite(fee.value) || fee.value < 0) {
+      notice = 'Enter a fee of zero or greater.';
+      render();
+      return;
+    }
     if (holding.action === 'sell' && holding.transactionShares > position.shares) {
       notice = `You cannot sell more than ${formatQuantity(position.shares)} shares.`;
       render();
@@ -1013,6 +1102,8 @@ function wireEvents(): void {
       type: holding.action,
       price: holding.transactionPrice,
       shares: holding.transactionShares,
+      feeMode: fee.mode,
+      feeValue: fee.value,
     });
     holding.transactionShares = 0;
     notice = `${holding.action === 'buy' ? 'Buy' : 'Sale'} added to the plan. Enter a new share amount for the next transaction.`;

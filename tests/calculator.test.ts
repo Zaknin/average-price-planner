@@ -99,3 +99,74 @@ describe('budget optimizer', () => {
     );
   });
 });
+
+describe('transaction fees', () => {
+  it('keeps zero-fee buy calculations compatible', () => {
+    const buy = applyTransaction({ shares: 100, averagePrice: 50 }, { id: 'zero', type: 'buy', shares: 10, price: 40 });
+    expect(buy.feeAmount).toBe(0);
+    expect(buy.totalAmount).toBe(400);
+    expect(buy.averageAfter).toBeCloseTo(49.0909091);
+  });
+
+  it('includes a 0.2% buy fee in total cash and cost basis', () => {
+    const buy = applyTransaction({ shares: 100, averagePrice: 50 }, { id: 'percent', type: 'buy', shares: 10, price: 40, feeMode: 'percent', feeValue: 0.2 });
+    expect(buy.feeAmount).toBeCloseTo(0.8);
+    expect(buy.totalAmount).toBeCloseTo(400.8);
+    expect(buy.averageAfter).toBeCloseTo(49.0981818);
+  });
+
+  it('includes a fixed buy fee in the new average', () => {
+    const buy = applyTransaction({ shares: 100, averagePrice: 50 }, { id: 'fixed', type: 'buy', shares: 10, price: 40, feeMode: 'fixed', feeValue: 10 });
+    expect(buy.feeAmount).toBe(10);
+    expect(buy.totalAmount).toBe(410);
+    expect(buy.averageAfter).toBeCloseTo(49.1818182);
+  });
+
+  it('deducts percentage and fixed fees from sell proceeds and profit', () => {
+    const percentSale = applyTransaction({ shares: 100, averagePrice: 80 }, { id: 'percent-sale', type: 'sell', shares: 10, price: 100, feeMode: 'percent', feeValue: 0.2 });
+    expect(percentSale.grossAmount).toBe(1000);
+    expect(percentSale.feeAmount).toBe(2);
+    expect(percentSale.netAmount).toBe(998);
+    expect(percentSale.realizedProfitLoss).toBe(198);
+
+    const fixedSale = applyTransaction({ shares: 100, averagePrice: 80 }, { id: 'fixed-sale', type: 'sell', shares: 10, price: 100, feeMode: 'fixed', feeValue: 10 });
+    expect(fixedSale.netAmount).toBe(990);
+    expect(fixedSale.realizedProfitLoss).toBe(190);
+  });
+
+  it('keeps the remaining average on a partial sale and clears it on a full sale', () => {
+    const partial = applyTransaction({ shares: 10, averagePrice: 20 }, { id: 'partial', type: 'sell', shares: 2, price: 25, feeMode: 'fixed', feeValue: 1 });
+    expect(partial.averageAfter).toBe(20);
+    const full = applyTransaction({ shares: 10, averagePrice: 20 }, { id: 'full', type: 'sell', shares: 10, price: 25, feeMode: 'percent', feeValue: 1 });
+    expect(full.sharesAfter).toBe(0);
+    expect(full.averageAfter).toBe(0);
+  });
+
+  it('warns when a fixed sell fee makes proceeds negative', () => {
+    const sale = applyTransaction({ shares: 10, averagePrice: 20 }, { id: 'negative-net', type: 'sell', shares: 1, price: 5, feeMode: 'fixed', feeValue: 10 });
+    expect(sale.netAmount).toBe(-5);
+    expect(sale.warning).toContain('Fee exceeds gross proceeds');
+  });
+
+  it('accounts for percentage and fixed buy fees in the maximum budget quantity', () => {
+    expect(budgetMaximumQuantity(1000, 40, 1, { mode: 'percent', value: 0.2 })).toBe(24);
+    expect(budgetMaximumQuantity(1000, 40, 1, { mode: 'fixed', value: 10 })).toBe(24);
+    expect(budgetMaximumQuantity(10, 40, 1, { mode: 'fixed', value: 10 })).toBe(0);
+  });
+
+  it('calculates mixed sequential fees from each previous position', () => {
+    const result = applyTransactions(
+      { shares: 100, averagePrice: 50 },
+      [
+        { id: 'buy-one', type: 'buy', shares: 10, price: 40, feeMode: 'fixed', feeValue: 10 },
+        { id: 'buy-two', type: 'buy', shares: 10, price: 45, feeMode: 'percent', feeValue: 1 },
+        { id: 'sell', type: 'sell', shares: 20, price: 55, feeMode: 'fixed', feeValue: 5 },
+      ],
+    );
+    expect(result.results.map((item) => item.valid)).toEqual([true, true, true]);
+    expect(result.results[0]?.averageAfter).toBeCloseTo(49.1818182);
+    expect(result.results[1]?.averageAfter).toBeCloseTo(48.8708333);
+    expect(result.results[2]?.realizedProfitLoss).toBeCloseTo(117.5833333);
+    expect(result.finalPosition).toEqual(expect.objectContaining({ shares: 100 }));
+  });
+});

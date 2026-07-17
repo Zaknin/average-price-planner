@@ -4,6 +4,15 @@ import { beforeAll, describe, expect, it } from 'vitest';
 beforeAll(async () => {
   document.body.innerHTML = '<div id="app"></div>';
   localStorage.clear();
+  localStorage.setItem('average-down-optimizer:v2', JSON.stringify({
+    version: 2,
+    activeHoldingId: 'pre-fee-position',
+    holdings: [{
+      id: 'pre-fee-position', ticker: '', currency: 'USD', baseShares: 100, baseAverage: 50,
+      action: 'buy', transactionPrice: 40, transactionShares: 50, budget: 4000, shareStep: 1,
+      efficiencyFloor: 0.25, budgetBenefitTarget: 0.8, transactions: [],
+    }],
+  }));
   await import('../src/main');
 });
 
@@ -12,6 +21,45 @@ describe('application smoke test', () => {
     expect(document.body.textContent).toContain('Average Price Planner');
     expect(document.body.textContent).toContain('New average');
     expect(document.body.textContent).toContain('$46.6667');
+  });
+
+  it('migrates fee settings for existing positions without changing their data', () => {
+    const saved = JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}');
+    expect(saved.holdings[0].buyFee).toEqual({ mode: 'percent', value: 0 });
+    expect(saved.holdings[0].sellFee).toEqual({ mode: 'percent', value: 0 });
+    expect(document.querySelector<HTMLInputElement>('#transactionFee')?.value).toBe('0');
+  });
+
+  it('keeps Buy and Sell fee preferences separate', () => {
+    const buyFee = document.querySelector<HTMLInputElement>('#transactionFee');
+    expect(buyFee).not.toBeNull();
+    if (!buyFee) return;
+    buyFee.value = '0.2';
+    buyFee.dispatchEvent(new Event('change', { bubbles: true }));
+
+    document.querySelector<HTMLButtonElement>('[data-action="sell"]')?.click();
+    expect(document.querySelector<HTMLInputElement>('#transactionFee')?.value).toBe('0');
+    document.querySelector<HTMLButtonElement>('[data-fee-mode="fixed"]')?.click();
+    const sellFee = document.querySelector<HTMLInputElement>('#transactionFee');
+    if (!sellFee) return;
+    sellFee.value = '10';
+    sellFee.dispatchEvent(new Event('change', { bubbles: true }));
+
+    document.querySelector<HTMLButtonElement>('[data-action="buy"]')?.click();
+    expect(document.querySelector<HTMLInputElement>('#transactionFee')?.value).toBe('0.2');
+    expect(document.querySelector<HTMLButtonElement>('[data-fee-mode="percent"]')?.classList.contains('active')).toBe(true);
+
+    const restoredBuyFee = document.querySelector<HTMLInputElement>('#transactionFee');
+    if (!restoredBuyFee) return;
+    restoredBuyFee.value = '0';
+    restoredBuyFee.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector<HTMLButtonElement>('[data-action="sell"]')?.click();
+    const restoredSellFee = document.querySelector<HTMLInputElement>('#transactionFee');
+    if (!restoredSellFee) return;
+    restoredSellFee.value = '0';
+    restoredSellFee.dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector<HTMLButtonElement>('[data-fee-mode="percent"]')?.click();
+    document.querySelector<HTMLButtonElement>('[data-action="buy"]')?.click();
   });
 
   it('recalculates when the transaction price changes', () => {

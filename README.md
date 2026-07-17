@@ -2,6 +2,15 @@
 
 A browser-local planner for stock purchases, average-down analysis, future sales, and multiple saved holdings.
 
+## Version 1.5.0
+
+This release adds fee-aware buy and sell planning without changing browser-local storage or the completed responsive mobile design.
+
+- Buy fees can be entered as a percentage or fixed amount and are included in cash required, cost basis, new average, budget recommendations, scenarios, and the curve.
+- Sell fees reduce net proceeds and realized profit/loss while preserving the average cost of any remaining shares.
+- Each saved position keeps independent Buy and Sell fee preferences; existing positions and plans migrate as zero-fee data.
+- Planned transaction rows and mobile transaction cards show gross value, fee type and amount, total paid or net received, and the resulting position.
+
 ## Version 1.4.0
 
 This release redesigns the mobile experience from 320 px through 430 px wide while keeping the desktop workspace and calculation behavior intact.
