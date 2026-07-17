@@ -950,7 +950,7 @@ function render(): void {
           ${transactionPlan(results, holding)}
         </section>
 
-        <p class="disclaimer">Calculations are estimates before commissions and taxes. Selling does not change average cost under the average-cost method; it realizes a gain or loss on the shares sold.</p>
+        <p class="disclaimer">Calculations include the transaction fees you configure, but remain estimates before taxes. Selling does not change average cost under the average-cost method; it realizes a gain or loss on the shares sold.</p>
       </section>
     </main>
   `;
