@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 beforeAll(async () => {
   document.body.innerHTML = '<div id="app"></div>';
@@ -27,7 +27,7 @@ describe('application smoke test', () => {
     const saved = JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}');
     expect(saved.holdings[0].buyFee).toEqual({ mode: 'percent', value: 0 });
     expect(saved.holdings[0].sellFee).toEqual({ mode: 'percent', value: 0 });
-    expect(saved.version).toBe(3);
+    expect(saved.version).toBe(4);
     expect(saved.holdings[0].currentMarketPrice).toBe(0);
     expect(saved.holdings[0].targetSellMode).toBe('breakEven');
     expect(document.querySelector<HTMLInputElement>('#transactionFee')?.value).toBe('0');
@@ -89,6 +89,42 @@ describe('application smoke test', () => {
     expect(document.querySelector<HTMLInputElement>('#transactionPrice')?.value).toBe(priceBefore);
   });
 
+  it('creates, loads, archives, restores, compares, and deletes a scenario with confirmations', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    document.querySelector<HTMLButtonElement>('#newScenario')?.click();
+    expect(document.querySelector<HTMLInputElement>('#scenarioName')).not.toBeNull();
+    const initialName = document.querySelector<HTMLInputElement>('#scenarioName');
+    if (initialName) { initialName.value = 'Mobile plan'; initialName.dispatchEvent(new Event('change', { bubbles: true })); }
+    const saved = JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}');
+    expect(saved.scenarios).toHaveLength(1);
+    document.querySelector<HTMLButtonElement>('[data-load-scenario]')?.click();
+    expect(confirm).toHaveBeenCalled();
+    document.querySelector<HTMLButtonElement>('[data-duplicate-scenario]')?.click();
+    expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}').scenarios).toHaveLength(2);
+    document.querySelector<HTMLButtonElement>('[data-scenario-archive]')?.click();
+    expect(document.body.textContent).toContain('archived');
+    document.querySelector<HTMLButtonElement>('[data-scenario-archive]')?.click();
+    expect(document.body.textContent).toContain('restored');
+    const compare = document.querySelector<HTMLInputElement>('[data-compare-scenario]');
+    if (compare) { compare.checked = true; compare.dispatchEvent(new Event('change', { bubbles: true })); }
+    expect(document.querySelectorAll('.comparison-cards .scenario-card')).toHaveLength(1);
+    document.querySelector<HTMLButtonElement>('[data-delete-scenario]')?.click();
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+
+  it('previews and applies executed scenario rows only after confirmation', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    document.querySelector<HTMLButtonElement>('#toggleScenarioPlanner')?.click();
+    document.querySelector<HTMLButtonElement>('[data-status="executed"]')?.click();
+    document.querySelector<HTMLButtonElement>('#previewApplyExecuted')?.click();
+    expect(document.body.textContent).toContain('Application preview');
+    document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.click();
+    expect(document.body.textContent).toContain('Applied 1 executed transaction');
+    expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}').scenarios.some((scenario: { transactions: Array<{ appliedAt?: string }> }) => scenario.transactions.some((transaction) => transaction.appliedAt))).toBe(true);
+    confirm.mockRestore();
+  });
+
   it('renders mobile-specific controls and accessible disclosures', () => {
     const holdingEditor = document.querySelector<HTMLButtonElement>('#toggleHoldingEditor');
     expect(holdingEditor?.getAttribute('aria-controls')).toBe('holdingEditor');
@@ -103,7 +139,7 @@ describe('application smoke test', () => {
     expect(document.querySelector('#improvementCurve')?.classList.contains('is-expanded')).toBe(true);
 
     expect(document.querySelectorAll('.scenario-card')).not.toHaveLength(0);
-    expect(document.querySelectorAll('.transaction-card')).toHaveLength(1);
+    expect(document.querySelectorAll('.transaction-card').length).toBeGreaterThanOrEqual(1);
   });
 
   it('creates and switches to another saved position', () => {

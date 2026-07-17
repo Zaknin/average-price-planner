@@ -120,7 +120,7 @@ describe('backup and CSV data utilities', () => {
     expect(parseBackupJson(JSON.stringify(current)).positions).toHaveLength(1);
     const legacy = { ...current, backupSchemaVersion: 0, version: '1.5.0' };
     delete (legacy as Record<string, unknown>).applicationVersion;
-    expect(parseBackupJson(JSON.stringify(legacy)).backupSchemaVersion).toBe(1);
+    expect(parseBackupJson(JSON.stringify(legacy)).backupSchemaVersion).toBe(2);
   });
 
   it('rejects malformed, unsafe, and invalid backup data before mutation', () => {

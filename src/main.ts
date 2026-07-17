@@ -15,18 +15,30 @@ import {
   sharesForTargetAverage,
   type Position,
   type FeeSettings,
-  type Transaction,
   type TransactionResult,
   type TransactionType,
 } from './calculator';
 import {
   createBackup,
-  mergeBackupPositions,
+  mergeBackupScenarios,
+  ladderCsv,
   parseBackupJson,
   planCsv,
+  scenarioCsv,
   type BackupDocument,
   type BackupPosition,
 } from './data';
+import type { DcaLadder, Scenario, ScenarioStatus, ScenarioTransaction, StressPrice } from './domain';
+import {
+  activeLadderFee,
+  generateDcaLadder,
+  previewExecutionApplication,
+  projectLadder,
+  projectScenario,
+  reverseSell,
+  stressPrices,
+  summarizeScenario,
+} from './planner';
 
 type HoldingState = {
   id: string;
@@ -50,13 +62,15 @@ type HoldingState = {
   targetSellShares: number;
   targetSellMode: 'breakEven' | 'profit' | 'return';
   targetSellValue: number;
-  transactions: Transaction[];
+  transactions: ScenarioTransaction[];
 };
 
 type AppStore = {
-  version: 3;
+  version: 4;
   activeHoldingId: string;
   holdings: HoldingState[];
+  scenarios: Scenario[];
+  comparisonScenarioIds: string[];
 };
 
 type LegacyState = {
@@ -88,6 +102,17 @@ let marketSnapshotExpanded = false;
 let targetsExpanded = false;
 let targetTab: 'average' | 'sell' = 'average';
 let pendingImport: BackupDocument | null = null;
+let loadedScenarioId: string | null = null;
+let scenarioPanelExpanded = false;
+let comparisonExpanded = false;
+let reverseSellExpanded = false;
+let stressAscending = true;
+let reverseShares: number | null = null;
+let reversePrice: number | null = null;
+let reverseTarget = 0;
+let pendingApplicationScenarioId: string | null = null;
+let reverseMode: 'breakEven' | 'profit' | 'return' | 'netProceeds' = 'profit';
+let reverseDirection: 'price' | 'shares' = 'price';
 
 function createId(): string {
   const cryptoObject = globalThis.crypto as Crypto | undefined;
@@ -129,6 +154,82 @@ function createHolding(overrides: Partial<HoldingState> = {}): HoldingState {
   };
 }
 
+function nonNegative(value: unknown, fallback = 0): number {
+  return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : fallback;
+}
+
+function normalizeScenarioTransaction(value: Partial<ScenarioTransaction>, index = 0): ScenarioTransaction | null {
+  const shares = Number(value.shares);
+  const price = Number(value.price);
+  if (!isFinitePositive(shares) || !isFinitePositive(price)) return null;
+  const createdAt = typeof value.createdAt === 'string' && value.createdAt ? value.createdAt : '1970-01-01T00:00:00.000Z';
+  const updatedAt = typeof value.updatedAt === 'string' && value.updatedAt ? value.updatedAt : createdAt;
+  return {
+    id: typeof value.id === 'string' && value.id ? value.id : createId(),
+    type: value.type === 'sell' ? 'sell' : 'buy',
+    shares,
+    price,
+    feeMode: value.feeMode === 'fixed' ? 'fixed' : 'percent',
+    feeValue: Number.isFinite(Number(value.feeValue)) && Number(value.feeValue) >= 0 ? Number(value.feeValue) : 0,
+    status: value.status === 'executed' || value.status === 'cancelled' ? value.status : 'planned',
+    createdAt,
+    updatedAt,
+    createdOrder: Number.isFinite(Number(value.createdOrder)) ? Number(value.createdOrder) : index,
+    ...(typeof value.executionDate === 'string' && value.executionDate ? { executionDate: value.executionDate } : {}),
+    ...(isFinitePositive(Number(value.executionPrice)) ? { executionPrice: Number(value.executionPrice) } : {}),
+    ...(isFinitePositive(Number(value.executionShares)) ? { executionShares: Number(value.executionShares) } : {}),
+    ...(Number.isFinite(Number(value.actualFee)) && Number(value.actualFee) >= 0 ? { actualFee: Number(value.actualFee) } : {}),
+    ...(typeof value.note === 'string' ? { note: value.note.slice(0, 500) } : {}),
+    ...(typeof value.brokerLabel === 'string' ? { brokerLabel: value.brokerLabel.slice(0, 120) } : {}),
+    ...(typeof value.appliedAt === 'string' && value.appliedAt ? { appliedAt: value.appliedAt } : {}),
+    ...(typeof value.ladderLevelId === 'string' && value.ladderLevelId ? { ladderLevelId: value.ladderLevelId } : {}),
+  };
+}
+
+function defaultStressPrices(): StressPrice[] {
+  return [-30, -20, -10, 0, 10, 20, 30].map((value) => ({ id: createId(), kind: 'percent' as const, value }));
+}
+
+function defaultLadder(): DcaLadder {
+  return { levelCount: 4, startPrice: 40, endPrice: 30, distribution: 'equalCash', spacing: 'linear', totalInvestment: 1000, totalShares: 100, feeMode: 'percent', percentFeeValue: 0, fixedFeeValue: 0, sharePrecision: 1, pricePrecision: 2, includeCurrentPosition: true, levels: [] };
+}
+
+function normalizeScenario(value: Partial<Scenario>, fallbackHoldingId: string): Scenario | null {
+  if (typeof value.id !== 'string' || !value.id) return null;
+  const base = value.basePosition;
+  if (!base || !Number.isFinite(Number(base.shares)) || Number(base.shares) < 0 || !Number.isFinite(Number(base.averagePrice)) || Number(base.averagePrice) < 0) return null;
+  const ladderRaw = value.ladder;
+  const ladder = ladderRaw && typeof ladderRaw === 'object'
+    ? {
+        ...defaultLadder(),
+        ...ladderRaw,
+        levels: Array.isArray(ladderRaw.levels)
+          ? ladderRaw.levels.filter((level) => level && isFinitePositive(Number(level.shares)) && isFinitePositive(Number(level.price))).map((level) => ({ id: typeof level.id === 'string' && level.id ? level.id : createId(), price: Number(level.price), shares: Number(level.shares), feeMode: level.feeMode === 'fixed' ? 'fixed' as const : 'percent' as const, feeValue: Number.isFinite(Number(level.feeValue)) && Number(level.feeValue) >= 0 ? Number(level.feeValue) : 0 }))
+          : [],
+      } as DcaLadder
+    : null;
+  const transactions = Array.isArray(value.transactions)
+    ? value.transactions.map((transaction, index) => normalizeScenarioTransaction(transaction, index)).filter((transaction): transaction is ScenarioTransaction => transaction !== null)
+    : [];
+  const createdAt = typeof value.createdAt === 'string' && value.createdAt ? value.createdAt : '1970-01-01T00:00:00.000Z';
+  return {
+    id: value.id,
+    holdingId: typeof value.holdingId === 'string' && value.holdingId ? value.holdingId : fallbackHoldingId,
+    name: typeof value.name === 'string' ? value.name.slice(0, 120) : 'Untitled scenario',
+    note: typeof value.note === 'string' ? value.note.slice(0, 1000) : '',
+    status: value.status === 'active' || value.status === 'completed' || value.status === 'archived' ? value.status : 'draft',
+    createdAt,
+    updatedAt: typeof value.updatedAt === 'string' && value.updatedAt ? value.updatedAt : createdAt,
+    basePosition: { shares: Number(base.shares), averagePrice: Number(base.averagePrice) },
+    marketPrice: Number.isFinite(Number(value.marketPrice)) && Number(value.marketPrice) >= 0 ? Number(value.marketPrice) : 0,
+    transactions,
+    ladder,
+    stressPrices: Array.isArray(value.stressPrices)
+      ? value.stressPrices.filter((item) => item && (item.kind === 'absolute' || item.kind === 'percent') && Number.isFinite(Number(item.value))).map((item) => ({ id: typeof item.id === 'string' && item.id ? item.id : createId(), kind: item.kind, value: Number(item.value) }))
+      : defaultStressPrices(),
+  };
+}
+
 function normalizeHolding(value: Partial<HoldingState>): HoldingState {
   const defaults = createHolding();
   const finiteNonNegative = (input: unknown, fallback: number): number => Number.isFinite(Number(input)) && Number(input) >= 0 ? Number(input) : fallback;
@@ -161,16 +262,7 @@ function normalizeHolding(value: Partial<HoldingState>): HoldingState {
     targetSellMode: value.targetSellMode === 'profit' || value.targetSellMode === 'return' ? value.targetSellMode : 'breakEven',
     targetSellValue: finiteNonNegative(value.targetSellValue, 0),
     transactions: Array.isArray(value.transactions)
-      ? value.transactions
-          .filter((item): item is Transaction => Boolean(item && isFinitePositive(Number(item.shares)) && isFinitePositive(Number(item.price))))
-          .map((item) => ({
-            id: typeof item.id === 'string' && item.id ? item.id : createId(),
-            type: item.type === 'sell' ? 'sell' : 'buy',
-            shares: Number(item.shares),
-            price: Number(item.price),
-            feeMode: item.feeMode === 'fixed' ? 'fixed' : 'percent',
-            feeValue: Number.isFinite(Number(item.feeValue)) && Number(item.feeValue) >= 0 ? Number(item.feeValue) : 0,
-          }))
+      ? value.transactions.map((item, index) => normalizeScenarioTransaction(item, index)).filter((item): item is ScenarioTransaction => item !== null)
       : [],
   };
 }
@@ -190,15 +282,19 @@ function migrateLegacy(raw: string): AppStore | null {
       efficiencyFloor: Number(legacy.efficiencyFloor ?? 0.25),
       budgetBenefitTarget: Number(legacy.budgetBenefitTarget ?? 0.8),
       transactions: Array.isArray(legacy.purchases)
-        ? legacy.purchases.map((purchase) => ({
+        ? legacy.purchases.map((purchase, index) => ({
             id: purchase.id || createId(),
             type: 'buy' as const,
             shares: Number(purchase.shares),
             price: Number(purchase.price),
+            status: 'planned' as const,
+            createdAt: new Date(0).toISOString(),
+            updatedAt: new Date(0).toISOString(),
+            createdOrder: index,
           }))
         : [],
     });
-    return { version: 3, activeHoldingId: holding.id, holdings: [holding] };
+    return { version: 4, activeHoldingId: holding.id, holdings: [holding], scenarios: [], comparisonScenarioIds: [] };
   } catch {
     return null;
   }
@@ -216,7 +312,12 @@ function loadStore(): AppStore {
         const activeHoldingId = holdings.some((holding) => holding.id === parsed.activeHoldingId)
           ? String(parsed.activeHoldingId)
           : holdings[0]!.id;
-        const migrated = { version: 3 as const, activeHoldingId, holdings };
+        const rawScenarios = Array.isArray(parsed.scenarios) ? parsed.scenarios : [];
+        const scenarios = rawScenarios.map((scenario) => normalizeScenario(scenario, activeHoldingId)).filter((scenario): scenario is Scenario => scenario !== null);
+        const comparisonScenarioIds = Array.isArray(parsed.comparisonScenarioIds)
+          ? parsed.comparisonScenarioIds.filter((id): id is string => typeof id === 'string' && scenarios.some((scenario) => scenario.id === id && scenario.status !== 'archived')).slice(0, 4)
+          : [];
+        const migrated = { version: 4 as const, activeHoldingId, holdings, scenarios, comparisonScenarioIds };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
         return migrated;
       }
@@ -235,7 +336,7 @@ function loadStore(): AppStore {
   }
 
   const holding = createHolding();
-  return { version: 3, activeHoldingId: holding.id, holdings: [holding] };
+  return { version: 4, activeHoldingId: holding.id, holdings: [holding], scenarios: [], comparisonScenarioIds: [] };
 }
 
 function saveStore(): void {
@@ -807,7 +908,7 @@ function targetsPanel(position: Position, holding: HoldingState): string {
 }
 
 function dataManagementPanel(holding: HoldingState): string {
-  const preview = pendingImport ? `<div class="import-preview"><strong>Backup preview</strong><span>${pendingImport.positions.length} position${pendingImport.positions.length === 1 ? '' : 's'} · ${pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0)} planned transactions</span><span>${pendingImport.positions.map((position) => escapeHtml(String(position.ticker || 'Unnamed position'))).join(', ')}</span><span>Exported ${escapeHtml(pendingImport.exportedAt)} · schema ${pendingImport.backupSchemaVersion}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">Merge with current data</button><button id="applyReplaceImport" class="text-button danger-text">Replace all current data</button></div></div>` : '';
+  const preview = pendingImport ? (() => { const scenarioTransactions = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.length : 0), 0); const executed = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && (transaction as { status?: unknown }).status === 'executed').length : 0), 0); const applied = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && Boolean((transaction as { appliedAt?: unknown }).appliedAt)).length : 0), 0); return `<div class="import-preview"><strong>Backup preview</strong><span>${pendingImport.positions.length} positions · ${pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0)} plan transactions · ${pendingImport.scenarios.length} scenarios</span><span>${scenarioTransactions} scenario transactions · ${executed} executed · ${applied} applied</span><span>Exported ${escapeHtml(pendingImport.exportedAt)} · backup schema ${pendingImport.backupSchemaVersion}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">Merge with current data</button><button id="applyReplaceImport" class="text-button danger-text">Replace all current data</button></div></div>`; })() : '';
   return `
     <section class="panel data-panel">
       <div class="section-heading"><div><span class="eyebrow">Data management</span><h2>Backup, restore, and export</h2></div></div>
@@ -815,6 +916,188 @@ function dataManagementPanel(holding: HoldingState): string {
       <div class="button-row data-actions"><button id="exportAll" class="secondary-button">Export all positions</button><button id="exportActive" class="secondary-button">Export active position</button><button id="exportCsv" class="secondary-button" ${holding.transactions.length ? '' : 'disabled'}>Export plan CSV</button><label class="secondary-button file-button">Import JSON<input id="importJson" type="file" accept="application/json,.json" hidden /></label></div>
       ${preview}
     </section>`;
+}
+
+function scenarioForActiveHolding(): Scenario[] {
+  return store.scenarios.filter((scenario) => scenario.holdingId === activeHolding().id);
+}
+
+function loadedScenario(): Scenario | null {
+  return store.scenarios.find((scenario) => scenario.id === loadedScenarioId) ?? null;
+}
+
+function createScenarioFromHolding(name = ''): Scenario | null {
+  const holding = activeHolding();
+  const base = validBasePosition(holding);
+  if (!base) {
+    notice = 'Enter a valid current position before creating a scenario.';
+    return null;
+  }
+  const timestamp = new Date().toISOString();
+  const scenario: Scenario = {
+    id: createId(),
+    holdingId: holding.id,
+    name: name || `${holding.ticker || 'Position'} scenario`,
+    note: '',
+    status: 'draft',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    basePosition: base,
+    marketPrice: holding.currentMarketPrice,
+    transactions: holding.transactions.map((transaction, index) => ({ ...transaction, id: createId(), status: 'planned' as const, createdAt: timestamp, updatedAt: timestamp, createdOrder: index, appliedAt: undefined })),
+    ladder: null,
+    stressPrices: defaultStressPrices(),
+  };
+  store.scenarios.push(scenario);
+  loadedScenarioId = scenario.id;
+  scenarioPanelExpanded = true;
+  saveStore();
+  return scenario;
+}
+
+function touchScenario(scenario: Scenario): void {
+  scenario.updatedAt = new Date().toISOString();
+  saveStore();
+}
+
+function ensureLadder(scenario: Scenario): DcaLadder {
+  if (!scenario.ladder) scenario.ladder = defaultLadder();
+  return scenario.ladder;
+}
+
+function syncLadderTransactions(scenario: Scenario): void {
+  const ladder = scenario.ladder;
+  if (!ladder) return;
+  const preserved = scenario.transactions.filter((transaction) => !transaction.ladderLevelId);
+  const timestamp = new Date().toISOString();
+  scenario.transactions = [...preserved, ...ladder.levels.map((level, index) => ({
+    id: createId(), type: 'buy' as const, shares: level.shares, price: level.price,
+    feeMode: level.feeMode, feeValue: level.feeValue, status: 'planned' as const,
+    createdAt: timestamp, updatedAt: timestamp, createdOrder: preserved.length + index,
+    ladderLevelId: level.id,
+  }))];
+}
+
+function scenarioSummaryPanel(scenario: Scenario, holding: HoldingState): string {
+  const summary = summarizeScenario(scenario, holding.sellFee);
+  return `
+    <div class="scenario-summary result-strip six">
+      <div><span>Final shares</span><strong>${formatQuantity(summary.finalPosition.shares, holding)}</strong></div>
+      <div><span>Final average</span><strong>${summary.finalPosition.shares ? formatCurrency(summary.finalPosition.averagePrice, holding) : 'Closed'}</strong></div>
+      <div><span>Total fees</span><strong>${formatCurrency(summary.totalFees, holding)}</strong></div>
+      <div><span>Realized P/L</span><strong class="${summary.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.realizedProfitLoss, holding)}</strong></div>
+      <div><span>Unrealized P/L</span><strong class="${summary.unrealizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.unrealizedProfitLoss, holding)}</strong></div>
+      <div><span>Break-even</span><strong>${formatCurrency(summary.breakEvenPrice, holding)}</strong></div>
+    </div>`;
+}
+
+function ladderPanel(scenario: Scenario, holding: HoldingState): string {
+  const ladder = scenario.ladder ?? defaultLadder();
+  const projection = ladder.levels.length ? projectLadder(ladder, scenario.basePosition, scenario.marketPrice) : [];
+  const activeFee = activeLadderFee(ladder);
+  const rows = projection.map((row, index) => `
+    <article class="ladder-card">
+      <div class="scenario-card-heading"><strong>Level ${index + 1}</strong><span>Total ${formatCurrency(row.totalAmount, holding)}</span></div>
+      <div class="ladder-edit-grid">
+        <label class="field"><span>Price</span><input data-ladder-price="${row.level.id}" type="number" value="${row.level.price}" min="0" step="any" inputmode="decimal" /></label>
+        <label class="field"><span>Shares</span><input data-ladder-shares="${row.level.id}" type="number" value="${row.level.shares}" min="0" step="any" inputmode="decimal" /></label>
+      </div>
+      <dl><div><dt>Gross / fee</dt><dd>${formatCurrency(row.grossAmount, holding)} / ${formatCurrency(row.feeAmount, holding)}</dd></div><div><dt>Cumulative shares</dt><dd>${formatQuantity(row.cumulativePosition.shares, holding)}</dd></div><div><dt>Cumulative basis</dt><dd>${formatCurrency(row.cumulativePosition.shares * row.cumulativePosition.averagePrice, holding)}</dd></div><div><dt>Cumulative average</dt><dd>${formatCurrency(row.cumulativePosition.averagePrice, holding)}</dd></div></dl>
+      <div class="button-row"><button class="text-button" data-ladder-up="${row.level.id}" ${index === 0 ? 'disabled' : ''}>Move up</button><button class="text-button" data-ladder-down="${row.level.id}" ${index === projection.length - 1 ? 'disabled' : ''}>Move down</button><button class="text-button" data-ladder-duplicate="${row.level.id}">Duplicate</button><button class="text-button danger-text" data-ladder-remove="${row.level.id}">Remove</button></div>
+    </article>`).join('');
+  return `
+    <section class="subpanel ladder-panel">
+      <div class="section-heading compact"><div><span class="eyebrow">DCA ladder</span><h3>Build staged buys</h3></div><button id="exportLadderCsv" class="text-button" ${projection.length ? '' : 'disabled'}>Export ladder CSV</button></div>
+      <div class="field-grid three">
+        ${field('ladderLevels', 'Levels', ladder.levelCount, 'number', '4', '1')}
+        ${field('ladderStart', 'Start price', ladder.startPrice, 'number', '40')}
+        ${field('ladderEnd', 'End price', ladder.endPrice, 'number', '30')}
+        ${field('ladderInvestment', ladder.distribution === 'equalShares' ? 'Total shares' : 'All-in cash', ladder.distribution === 'equalShares' ? ladder.totalShares : ladder.totalInvestment, 'number', '1000')}
+        ${field('ladderShareStep', 'Share precision', ladder.sharePrecision, 'number', '1')}
+        ${field('ladderPricePrecision', 'Price precision', ladder.pricePrecision, 'number', '2', '1')}
+      </div>
+      <div class="segmented-control scenario-segment" aria-label="DCA distribution"><button data-ladder-distribution="equalCash" class="${ladder.distribution === 'equalCash' ? 'active' : ''}">Equal cash</button><button data-ladder-distribution="equalShares" class="${ladder.distribution === 'equalShares' ? 'active' : ''}">Equal shares</button><button data-ladder-distribution="custom" class="${ladder.distribution === 'custom' ? 'active' : ''}">Custom</button></div>
+      <div class="segmented-control scenario-segment" aria-label="DCA spacing"><button data-ladder-spacing="linear" class="${ladder.spacing === 'linear' ? 'active' : ''}">Linear prices</button><button data-ladder-spacing="percent" class="${ladder.spacing === 'percent' ? 'active' : ''}">Equal percent</button></div>
+      <div class="fee-controls compact-fee" aria-label="Ladder fee"><span class="fee-controls-label">Ladder fee</span><div class="segmented-control fee-mode-control"><button data-ladder-fee-mode="percent" class="${ladder.feeMode === 'percent' ? 'active' : ''}">Percent</button><button data-ladder-fee-mode="fixed" class="${ladder.feeMode === 'fixed' ? 'active' : ''}">Fixed</button></div>${field('ladderFee', ladder.feeMode === 'fixed' ? 'Fixed fee' : 'Fee percent', activeFee.value, 'number', '0')}</div>
+      <label class="check-field"><input id="ladderIncludeCurrent" type="checkbox" ${ladder.includeCurrentPosition ? 'checked' : ''} /> Include current position in cumulative average</label>
+      <div class="button-row"><button id="generateLadder" class="secondary-button">Generate ladder</button><button id="addLadderLevel" class="secondary-button">Add level</button><button id="clearLadder" class="text-button">Clear</button></div>
+      ${projection.length ? `<div class="ladder-cards">${rows}</div>` : '<div class="empty-state compact-empty">Generate a ladder, then fine-tune each level before saving the scenario.</div>'}
+    </section>`;
+}
+
+function scenarioTransactionsPanel(scenario: Scenario, holding: HoldingState): string {
+  if (!scenario.transactions.length) return `<div class="empty-state compact-empty">No scenario transactions yet. Generate a ladder or save a current plan.</div>`;
+  return `<div class="scenario-transaction-cards">${scenario.transactions.map((transaction) => `
+    <article class="transaction-card">
+      <div class="transaction-card-heading"><span class="action-tag ${transaction.type}">${transaction.type === 'buy' ? 'Buy' : 'Sell'}</span><span class="status-tag ${transaction.status}">${transaction.status}</span></div>
+      <dl><div><dt>Planned</dt><dd>${formatQuantity(transaction.shares, holding)} @ ${formatCurrency(transaction.price, holding)}</dd></div><div><dt>Fee</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>Execution</dt><dd>${transaction.executionDate || 'Not recorded'}</dd></div><div><dt>Applied</dt><dd>${transaction.appliedAt ? 'Applied' : 'Not applied'}</dd></div></dl>
+      <div class="ladder-edit-grid"><label class="field"><span>Actual price</span><input data-execution-price="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionPrice ?? transaction.price}" /></label><label class="field"><span>Actual shares</span><input data-execution-shares="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionShares ?? transaction.shares}" /></label><label class="field"><span>Actual fee</span><input data-actual-fee="${transaction.id}" type="number" min="0" step="any" value="${transaction.actualFee ?? ''}" placeholder="Use planned" /></label><label class="field"><span>Execution date</span><input data-execution-date="${transaction.id}" type="datetime-local" value="${transaction.executionDate ?? ''}" /></label></div>
+      <label class="field"><span>Note</span><input data-transaction-note="${transaction.id}" type="text" value="${escapeHtml(transaction.note ?? '')}" placeholder="Optional note" /></label>
+      <label class="field"><span>Broker / account</span><input data-broker-label="${transaction.id}" type="text" value="${escapeHtml(transaction.brokerLabel ?? '')}" placeholder="Optional label" /></label>
+      <div class="button-row"><button class="text-button" data-transaction-status="${transaction.id}" data-status="planned">Planned</button><button class="text-button" data-transaction-status="${transaction.id}" data-status="executed">Executed</button><button class="text-button danger-text" data-transaction-status="${transaction.id}" data-status="cancelled">Cancelled</button></div>
+    </article>`).join('')}</div>`;
+}
+
+function scenarioPlannerPanel(holding: HoldingState): string {
+  const scenario = loadedScenario();
+  const content = scenario ? `
+    <div class="field-grid two">${field('scenarioName', 'Scenario name', scenario.name, 'text', 'Scenario')}<label class="field"><span>Status</span><select id="scenarioStatus">${(['draft', 'active', 'completed', 'archived'] as ScenarioStatus[]).map((status) => `<option value="${status}" ${scenario.status === status ? 'selected' : ''}>${status[0]!.toUpperCase() + status.slice(1)}</option>`).join('')}</select></label>${field('scenarioMarketPrice', 'Scenario market price', scenario.marketPrice, 'number', '50')}<label class="field"><span>Scenario note</span><input id="scenarioNote" type="text" value="${escapeHtml(scenario.note)}" placeholder="Optional note" /></label></div>
+    ${scenarioSummaryPanel(scenario, holding)}
+    ${ladderPanel(scenario, holding)}
+    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Scenario transactions</span><h3>Planned, executed, and cancelled</h3></div><button id="exportScenarioCsv" class="text-button">Export scenario CSV</button></div>${scenarioTransactionsPanel(scenario, holding)}</section>
+    ${stressPanel(scenario, holding)}
+    ${reverseSellPanel(scenario, holding)}
+    ${executionApplicationPanel(scenario, holding)}` : `<div class="empty-state">Create or load a saved scenario to build a DCA ladder, record execution values, compare outcomes, and stress-test prices.</div>`;
+  return `
+    <section class="panel scenario-planner-panel">
+      <div class="section-heading"><div><span class="eyebrow">Scenario planner</span><h2>Build before changing your position</h2></div><button id="toggleScenarioPlanner" class="text-button" aria-expanded="${scenarioPanelExpanded}" aria-controls="scenarioPlannerContent">${scenarioPanelExpanded ? 'Hide planner' : 'Show planner'}</button></div>
+      <div id="scenarioPlannerContent" class="disclosure-content ${scenarioPanelExpanded ? 'is-expanded' : ''}">${content}</div>
+    </section>`;
+}
+
+function stressPanel(scenario: Scenario, holding: HoldingState): string {
+  const summary = summarizeScenario(scenario, holding.sellFee);
+  const baseMarket = scenario.marketPrice || holding.currentMarketPrice;
+  const entries = stressPrices(scenario.stressPrices, baseMarket).filter((item) => Number.isFinite(item.price) && item.price >= 0).sort((a, b) => stressAscending ? a.price - b.price : b.price - a.price);
+  return `
+    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Stress test</span><h3>Price outcomes</h3></div><button id="toggleStressSort" class="text-button">Sort ${stressAscending ? 'descending' : 'ascending'}</button></div>
+      <div class="button-row"><button id="resetStressPrices" class="text-button">Reset defaults</button><button id="addStressPrice" class="text-button">Add custom price</button></div>
+      <div class="stress-cards">${entries.map(({ entry, price }) => {
+        const marketValue = summary.finalPosition.shares * price;
+        const unrealized = marketValue - summary.finalCostBasis - (summary.finalPosition.shares ? feeAmountForScenario(marketValue, holding.sellFee) : 0);
+        const total = summary.realizedProfitLoss + unrealized;
+        return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${formatCurrency(price, holding)}</strong><button class="icon-button" data-remove-stress="${entry.id}" aria-label="Remove stress price">×</button></div><dl><div><dt>Final value</dt><dd>${formatCurrency(marketValue, holding)}</dd></div><div><dt>Unrealized P/L</dt><dd class="${unrealized >= 0 ? 'positive' : 'negative'}">${formatCurrency(unrealized, holding)}</dd></div><div><dt>Realized P/L</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>Total projected P/L</dt><dd class="${total >= 0 ? 'positive' : 'negative'}">${formatCurrency(total, holding)}</dd></div></dl></article>`;
+      }).join('')}</div>
+    </section>`;
+}
+
+function feeAmountForScenario(gross: number, fee: FeeSettings): number {
+  return fee.mode === 'percent' ? gross * fee.value / 100 : fee.value;
+}
+
+function reverseSellPanel(scenario: Scenario, holding: HoldingState): string {
+  const shares = reverseShares ?? scenario.basePosition.shares;
+  const price = reversePrice ?? scenario.marketPrice;
+  const result = reverseSell({ position: scenario.basePosition, fee: holding.sellFee, shareStep: holding.shareStep, mode: reverseMode, direction: reverseDirection, shares, price, targetValue: reverseTarget });
+  return `
+    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Reverse sell</span><h3>Plan an exit</h3></div><button id="toggleReverseSell" class="text-button" aria-expanded="${reverseSellExpanded}">${reverseSellExpanded ? 'Hide' : 'Show'}</button></div>
+    <div class="disclosure-content ${reverseSellExpanded ? 'is-expanded' : ''}"><div class="segmented-control scenario-segment"><button data-reverse-direction="price" class="${reverseDirection === 'price' ? 'active' : ''}">Solve price</button><button data-reverse-direction="shares" class="${reverseDirection === 'shares' ? 'active' : ''}">Solve shares</button></div><div class="segmented-control scenario-segment"><button data-reverse-mode="profit" class="${reverseMode === 'profit' ? 'active' : ''}">Profit</button><button data-reverse-mode="return" class="${reverseMode === 'return' ? 'active' : ''}">Return %</button><button data-reverse-mode="netProceeds" class="${reverseMode === 'netProceeds' ? 'active' : ''}">Net proceeds</button><button data-reverse-mode="breakEven" class="${reverseMode === 'breakEven' ? 'active' : ''}">Break even</button></div><div class="field-grid three">${field('reverseShares', 'Shares to sell', shares, 'number', '100')}${field('reversePrice', 'Sale price', price, 'number', '60')}${field('reverseTarget', reverseMode === 'return' ? 'Target return %' : reverseMode === 'netProceeds' ? 'Target net proceeds' : 'Profit target', reverseTarget, 'number', '500')}</div>${result.valid ? `<div class="result-strip six"><div><span>Required price</span><strong>${formatCurrency(result.requiredPrice, holding)}</strong></div><div><span>Quantity</span><strong>${formatQuantity(result.requiredShares, holding)}</strong></div><div><span>Gross / fee</span><strong>${formatCurrency(result.grossAmount, holding)} / ${formatCurrency(result.feeAmount, holding)}</strong></div><div><span>Net proceeds</span><strong>${formatCurrency(result.netAmount, holding)}</strong></div><div><span>Realized P/L</span><strong>${formatCurrency(result.realizedProfitLoss, holding)}</strong></div><div><span>Remaining shares</span><strong>${formatQuantity(result.remainingPosition.shares, holding)}</strong></div></div>` : `<div class="plain-summary warning-summary"><strong>${escapeHtml(result.error ?? 'Enter valid reverse-sell inputs.')}</strong></div>`}</div></section>`;
+}
+
+function executionApplicationPanel(scenario: Scenario, holding: HoldingState): string {
+  const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario);
+  const isPending = pendingApplicationScenarioId === scenario.id;
+  return `<section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Apply execution</span><h3>Update saved position explicitly</h3></div><button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>Apply executed transactions</button></div>${isPending ? `<div class="import-preview"><strong>Application preview</strong><span>${preview.candidates.length} executed transaction${preview.candidates.length === 1 ? '' : 's'}; ${preview.skipped.length} skipped.</span>${preview.valid ? `<span>Result: ${formatQuantity(preview.finalPosition.shares, holding)} shares at ${formatCurrency(preview.finalPosition.averagePrice, holding)} · Fees ${formatCurrency(preview.totalFees, holding)} · Realized P/L ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">Confirm apply</button><button id="cancelApplyExecuted" class="text-button">Cancel</button></div>` : `<span class="negative">${escapeHtml(preview.error ?? 'The application is blocked.')}</span>`}</div>` : '<p class="helper-text">Only executed, not-yet-applied rows are considered. Planned and cancelled rows are skipped.</p>'}</section>`;
+}
+
+function savedScenariosPanel(holding: HoldingState): string {
+  const scenarios = scenarioForActiveHolding();
+  return `<section class="panel"><div class="section-heading"><div><span class="eyebrow">Saved scenarios</span><h2>Compare plans safely</h2></div><div class="button-row"><button id="newScenario" class="secondary-button">New scenario</button><button id="savePlanScenario" class="secondary-button">Save current plan</button></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${scenario.status}</span></div><p>${escapeHtml(scenario.note || 'No note')}</p><dl><div><dt>Final position</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)} @ ${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Total P/L</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">Load</button><button class="text-button" data-duplicate-scenario="${scenario.id}">Duplicate</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? 'Restore' : 'Archive'}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">Delete</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> Compare</label></div></article>`; }).join('')}</div>` : '<div class="empty-state">No saved scenarios for this position yet.</div>'}</section>`;
+}
+
+function comparisonPanel(holding: HoldingState): string {
+  const scenarios = store.scenarios.filter((scenario) => store.comparisonScenarioIds.includes(scenario.id) && scenario.status !== 'archived');
+  return `<section class="panel"><div class="section-heading"><div><span class="eyebrow">Compare</span><h2>Up to four scenarios</h2></div><button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? 'Hide comparison' : 'Show comparison'}</button></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="Remove from comparison">×</button></div><dl><div><dt>Starting position</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>Planned buys / sells</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>Total fees</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>Final quantity</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>Final average</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Market value</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>Realized P/L</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>Unrealized P/L</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>Break-even</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>Maximum cash required</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">Clear comparison</button>` : '<div class="empty-state">Select up to four active scenarios to compare their arithmetic outcomes.</div>'}</div></section>`;
 }
 
 function dateStamp(): string {
@@ -833,10 +1116,11 @@ function downloadText(filename: string, content: string, type: string): void {
 function exportBackup(scope: 'all' | 'active'): void {
   const holding = activeHolding();
   const positions = scope === 'all' ? store.holdings : [holding];
-  const backup = createBackup(positions as unknown as BackupPosition[], scope === 'all' ? store.activeHoldingId : undefined, scope);
+  const scenarios = scope === 'all' ? store.scenarios : store.scenarios.filter((scenario) => scenario.holdingId === holding.id);
+  const backup = createBackup(positions as unknown as BackupPosition[], scope === 'all' ? store.activeHoldingId : undefined, scope, undefined, scenarios as unknown as BackupPosition[], scope === 'all' ? store.comparisonScenarioIds : store.comparisonScenarioIds.filter((id) => scenarios.some((scenario) => scenario.id === id)));
   const prefix = scope === 'active' && holding.ticker ? holding.ticker.replace(/[^A-Z0-9._-]/gi, '').slice(0, 24) : 'average-price-planner';
   downloadText(`${prefix}-backup-${dateStamp()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
-  notice = `Exported ${positions.length} position${positions.length === 1 ? '' : 's'} as a browser-local backup.`;
+  notice = `Exported ${positions.length} position${positions.length === 1 ? '' : 's'} and ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} as a browser-local backup.`;
   render();
 }
 
@@ -870,12 +1154,27 @@ function applyPendingImport(mode: 'merge' | 'replace'): void {
   if (!pendingImport) return;
   if (mode === 'replace' && !window.confirm('Replace all current browser-local positions with this backup? This cannot be undone unless you exported a backup first.')) return;
   const imported = pendingImport.positions.map((position) => normalizeHolding(position as Partial<HoldingState>));
+  const importedScenarios = pendingImport.scenarios.map((scenario) => normalizeScenario(scenario, imported[0]?.id ?? activeHolding().id)).filter((scenario): scenario is Scenario => scenario !== null);
   if (mode === 'merge') {
-    const merged = mergeBackupPositions(store.holdings as unknown as BackupPosition[], imported as unknown as BackupPosition[], createId)
-      .map((position) => normalizeHolding(position as Partial<HoldingState>));
-    store.holdings = merged;
+    const usedHoldingIds = new Set(store.holdings.map((holding) => holding.id));
+    const holdingIdMap = new Map<string, string>();
+    const mergedImported = imported.map((holding) => {
+      const originalId = holding.id;
+      let id = originalId;
+      while (usedHoldingIds.has(id)) id = createId();
+      usedHoldingIds.add(id);
+      holdingIdMap.set(originalId, id);
+      return { ...holding, id };
+    });
+    store.holdings = [...store.holdings, ...mergedImported];
+    const remappedScenarios = importedScenarios.map((scenario) => ({ ...scenario, holdingId: holdingIdMap.get(scenario.holdingId) ?? scenario.holdingId }));
+    store.scenarios = mergeBackupScenarios(store.scenarios as unknown as BackupPosition[], remappedScenarios as unknown as BackupPosition[], createId)
+      .map((scenario) => normalizeScenario(scenario, activeHolding().id))
+      .filter((scenario): scenario is Scenario => scenario !== null);
   } else {
     store.holdings = imported.length ? imported : [createHolding()];
+    store.scenarios = importedScenarios.filter((scenario) => store.holdings.some((holding) => holding.id === scenario.holdingId));
+    store.comparisonScenarioIds = pendingImport.comparisonScenarioIds.filter((id) => store.scenarios.some((scenario) => scenario.id === id && scenario.status !== 'archived')).slice(0, 4);
   }
   store.activeHoldingId = mode === 'replace' && pendingImport.activeHoldingId && store.holdings.some((holding) => holding.id === pendingImport!.activeHoldingId)
     ? pendingImport.activeHoldingId
@@ -883,7 +1182,7 @@ function applyPendingImport(mode: 'merge' | 'replace'): void {
   const transactionCount = imported.reduce((total, holding) => total + holding.transactions.length, 0);
   pendingImport = null;
   saveStore();
-  notice = `Imported ${imported.length} position${imported.length === 1 ? '' : 's'} and ${transactionCount} planned transaction${transactionCount === 1 ? '' : 's'}.`;
+  notice = `Imported ${imported.length} position${imported.length === 1 ? '' : 's'}, ${transactionCount} plan transaction${transactionCount === 1 ? '' : 's'}, and ${importedScenarios.length} scenario${importedScenarios.length === 1 ? '' : 's'}.`;
   render();
 }
 
@@ -1039,7 +1338,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner <span class="release-tag">v1.6</span></h1>
+          <h1>Average Price Planner <span class="release-tag">v1.7</span></h1>
           <p>Compare future buys and sales for each holding</p>
         </div>
       </div>
@@ -1148,6 +1447,12 @@ function render(): void {
         ${marketSnapshotPanel(analyzablePosition, holding)}
 
         ${analyzablePosition ? targetsPanel(analyzablePosition, holding) : ''}
+
+        ${scenarioPlannerPanel(holding)}
+
+        ${savedScenariosPanel(holding)}
+
+        ${comparisonPanel(holding)}
 
         ${isBuy && analyzablePosition ? `
           <section class="panel">
@@ -1411,6 +1716,10 @@ function wireEvents(): void {
       shares: holding.transactionShares,
       feeMode: fee.mode,
       feeValue: fee.value,
+      status: 'planned',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdOrder: holding.transactions.length,
     });
     holding.transactionShares = 0;
     notice = `${holding.action === 'buy' ? 'Buy' : 'Sale'} added to the plan. Enter a new share amount for the next transaction.`;
@@ -1424,6 +1733,139 @@ function wireEvents(): void {
     saveStore();
     render();
   });
+
+  document.querySelector<HTMLButtonElement>('#toggleScenarioPlanner')?.addEventListener('click', () => {
+    scenarioPanelExpanded = !scenarioPanelExpanded;
+    render();
+  });
+  document.querySelector<HTMLButtonElement>('#newScenario')?.addEventListener('click', () => {
+    if (createScenarioFromHolding()) notice = 'New scenario created from the current position.';
+    render();
+  });
+  document.querySelector<HTMLButtonElement>('#savePlanScenario')?.addEventListener('click', () => {
+    if (createScenarioFromHolding(`${activeHolding().ticker || 'Position'} saved plan`)) notice = 'Current plan saved as an independent scenario.';
+    render();
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-load-scenario]').forEach((button) => button.addEventListener('click', () => {
+    const id = button.dataset.loadScenario;
+    if (!id || !store.scenarios.some((scenario) => scenario.id === id)) return;
+    if (!window.confirm('Load this scenario into the planner? Your saved current position will not be changed.')) return;
+    loadedScenarioId = id;
+    scenarioPanelExpanded = true;
+    pendingApplicationScenarioId = null;
+    notice = 'Scenario loaded into the planner workspace.';
+    render();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-duplicate-scenario]').forEach((button) => button.addEventListener('click', () => {
+    const source = store.scenarios.find((scenario) => scenario.id === button.dataset.duplicateScenario);
+    if (!source) return;
+    const timestamp = new Date().toISOString();
+    const copy: Scenario = JSON.parse(JSON.stringify(source)) as Scenario;
+    copy.id = createId(); copy.name = `${source.name} copy`; copy.status = 'draft'; copy.createdAt = timestamp; copy.updatedAt = timestamp;
+    copy.transactions = copy.transactions.map((transaction, index) => ({ ...transaction, id: createId(), appliedAt: undefined, createdAt: timestamp, updatedAt: timestamp, createdOrder: index }));
+    copy.ladder = copy.ladder ? { ...copy.ladder, levels: copy.ladder.levels.map((level) => ({ ...level, id: createId() })) } : null;
+    store.scenarios.push(copy); loadedScenarioId = copy.id; scenarioPanelExpanded = true; saveStore(); notice = 'Scenario duplicated.'; render();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-scenario-archive]').forEach((button) => button.addEventListener('click', () => {
+    const scenario = store.scenarios.find((item) => item.id === button.dataset.scenarioArchive);
+    if (!scenario) return;
+    scenario.status = scenario.status === 'archived' ? 'draft' : 'archived';
+    store.comparisonScenarioIds = store.comparisonScenarioIds.filter((id) => id !== scenario.id);
+    touchScenario(scenario); notice = scenario.status === 'archived' ? 'Scenario archived.' : 'Scenario restored as a draft.'; render();
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-delete-scenario]').forEach((button) => button.addEventListener('click', () => {
+    const id = button.dataset.deleteScenario;
+    if (!id || !window.confirm('Delete this saved scenario? This cannot be undone.')) return;
+    store.scenarios = store.scenarios.filter((scenario) => scenario.id !== id);
+    store.comparisonScenarioIds = store.comparisonScenarioIds.filter((item) => item !== id);
+    if (loadedScenarioId === id) loadedScenarioId = null;
+    saveStore(); notice = 'Scenario deleted.'; render();
+  }));
+  document.querySelectorAll<HTMLInputElement>('[data-compare-scenario]').forEach((input) => input.addEventListener('change', () => {
+    const id = input.dataset.compareScenario;
+    const scenario = store.scenarios.find((item) => item.id === id);
+    if (!id || !scenario || scenario.status === 'archived') return;
+    if (input.checked) {
+      if (store.comparisonScenarioIds.length >= 4) { notice = 'Comparison is limited to four non-archived scenarios.'; input.checked = false; render(); return; }
+      store.comparisonScenarioIds = [...store.comparisonScenarioIds.filter((item) => item !== id), id];
+      comparisonExpanded = true;
+    } else store.comparisonScenarioIds = store.comparisonScenarioIds.filter((item) => item !== id);
+    saveStore(); render();
+  }));
+  document.querySelector<HTMLButtonElement>('#toggleComparison')?.addEventListener('click', () => { comparisonExpanded = !comparisonExpanded; render(); });
+  document.querySelector<HTMLButtonElement>('#clearComparison')?.addEventListener('click', () => { store.comparisonScenarioIds = []; saveStore(); render(); });
+  document.querySelectorAll<HTMLButtonElement>('[data-remove-comparison]').forEach((button) => button.addEventListener('click', () => { store.comparisonScenarioIds = store.comparisonScenarioIds.filter((id) => id !== button.dataset.removeComparison); saveStore(); render(); }));
+
+  const scenario = loadedScenario();
+  const updateScenarioField = (id: string, apply: (value: string) => void): void => {
+    document.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)?.addEventListener('change', (event) => {
+      const current = loadedScenario(); if (!current) return;
+      apply((event.currentTarget as HTMLInputElement | HTMLSelectElement).value); touchScenario(current); render();
+    });
+  };
+  updateScenarioField('scenarioName', (value) => { const current = loadedScenario(); if (current) current.name = value.trim() || 'Untitled scenario'; });
+  updateScenarioField('scenarioStatus', (value) => { const current = loadedScenario(); if (current) { current.status = (['draft', 'active', 'completed', 'archived'] as string[]).includes(value) ? value as ScenarioStatus : 'draft'; if (current.status === 'archived') store.comparisonScenarioIds = store.comparisonScenarioIds.filter((id) => id !== current.id); } });
+  updateScenarioField('scenarioMarketPrice', (value) => { const current = loadedScenario(); if (current) current.marketPrice = nonNegative(value); });
+  updateScenarioField('scenarioNote', (value) => { const current = loadedScenario(); if (current) current.note = value; });
+
+  if (scenario) {
+    const ladder = ensureLadder(scenario);
+    ['ladderLevels', 'ladderStart', 'ladderEnd', 'ladderInvestment', 'ladderShareStep', 'ladderPricePrecision', 'ladderFee'].forEach((id) => {
+      document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('change', (event) => {
+        const value = nonNegative((event.currentTarget as HTMLInputElement).value);
+        if (id === 'ladderLevels') ladder.levelCount = Math.max(2, Math.min(20, Math.round(value)));
+        if (id === 'ladderStart') ladder.startPrice = value;
+        if (id === 'ladderEnd') ladder.endPrice = value;
+        if (id === 'ladderInvestment') { if (ladder.distribution === 'equalShares') ladder.totalShares = value; else ladder.totalInvestment = value; }
+        if (id === 'ladderShareStep') ladder.sharePrecision = Math.max(Number.EPSILON, value);
+        if (id === 'ladderPricePrecision') ladder.pricePrecision = Math.max(Number.EPSILON, value);
+        if (id === 'ladderFee') { if (ladder.feeMode === 'fixed') ladder.fixedFeeValue = value; else ladder.percentFeeValue = value; }
+        touchScenario(scenario); render();
+      });
+    });
+    document.querySelector<HTMLInputElement>('#ladderIncludeCurrent')?.addEventListener('change', (event) => { ladder.includeCurrentPosition = (event.currentTarget as HTMLInputElement).checked; touchScenario(scenario); render(); });
+    document.querySelectorAll<HTMLButtonElement>('[data-ladder-distribution]').forEach((button) => button.addEventListener('click', () => { ladder.distribution = button.dataset.ladderDistribution === 'equalShares' ? 'equalShares' : button.dataset.ladderDistribution === 'custom' ? 'custom' : 'equalCash'; touchScenario(scenario); render(); }));
+    document.querySelectorAll<HTMLButtonElement>('[data-ladder-spacing]').forEach((button) => button.addEventListener('click', () => { ladder.spacing = button.dataset.ladderSpacing === 'percent' ? 'percent' : 'linear'; touchScenario(scenario); render(); }));
+    document.querySelectorAll<HTMLButtonElement>('[data-ladder-fee-mode]').forEach((button) => button.addEventListener('click', () => { ladder.feeMode = button.dataset.ladderFeeMode === 'fixed' ? 'fixed' : 'percent'; touchScenario(scenario); render(); }));
+    document.querySelector<HTMLButtonElement>('#generateLadder')?.addEventListener('click', () => {
+      try {
+        const generated = generateDcaLadder({ ...ladder, distribution: ladder.distribution === 'custom' ? 'equalShares' : ladder.distribution, makeId: createId });
+        if (generated.error) throw new Error(generated.error);
+        scenario.ladder = { ...generated.ladder, distribution: ladder.distribution };
+        syncLadderTransactions(scenario); touchScenario(scenario); notice = 'Fee-aware ladder generated. Fine-tune rows before execution.';
+      } catch (error) { notice = error instanceof Error ? error.message : 'Could not generate this ladder.'; }
+      render();
+    });
+    document.querySelector<HTMLButtonElement>('#addLadderLevel')?.addEventListener('click', () => { const last = ladder.levels.at(-1); ladder.levels.push({ id: createId(), price: last?.price ?? ladder.endPrice, shares: last?.shares ?? ladder.sharePrecision, feeMode: ladder.feeMode, feeValue: activeLadderFee(ladder).value }); ladder.levelCount = Math.min(20, ladder.levels.length); syncLadderTransactions(scenario); touchScenario(scenario); render(); });
+    document.querySelector<HTMLButtonElement>('#clearLadder')?.addEventListener('click', () => { scenario.transactions = scenario.transactions.filter((transaction) => !transaction.ladderLevelId); scenario.ladder = null; touchScenario(scenario); notice = 'Ladder cleared; other scenario transactions were kept.'; render(); });
+    const changeLevel = (selector: string, apply: (level: DcaLadder['levels'][number], value: number) => void): void => document.querySelectorAll<HTMLInputElement>(selector).forEach((input) => input.addEventListener('change', () => { const level = ladder.levels.find((item) => item.id === (input.dataset.ladderPrice ?? input.dataset.ladderShares)); if (!level) return; apply(level, nonNegative(input.value)); syncLadderTransactions(scenario); touchScenario(scenario); render(); }));
+    changeLevel('[data-ladder-price]', (level, value) => { level.price = value; });
+    changeLevel('[data-ladder-shares]', (level, value) => { level.shares = value; });
+    document.querySelectorAll<HTMLButtonElement>('[data-ladder-remove], [data-ladder-duplicate], [data-ladder-up], [data-ladder-down]').forEach((button) => button.addEventListener('click', () => { const id = button.dataset.ladderRemove ?? button.dataset.ladderDuplicate ?? button.dataset.ladderUp ?? button.dataset.ladderDown; const index = ladder.levels.findIndex((level) => level.id === id); if (index < 0) return; if (button.dataset.ladderRemove) ladder.levels.splice(index, 1); if (button.dataset.ladderDuplicate) ladder.levels.splice(index + 1, 0, { ...ladder.levels[index]!, id: createId() }); if (button.dataset.ladderUp && index > 0) [ladder.levels[index - 1], ladder.levels[index]] = [ladder.levels[index]!, ladder.levels[index - 1]!]; if (button.dataset.ladderDown && index < ladder.levels.length - 1) [ladder.levels[index + 1], ladder.levels[index]] = [ladder.levels[index]!, ladder.levels[index + 1]!]; ladder.levelCount = Math.max(2, ladder.levels.length); syncLadderTransactions(scenario); touchScenario(scenario); render(); }));
+    document.querySelector<HTMLButtonElement>('#exportLadderCsv')?.addEventListener('click', () => { const rows = projectLadder(ladder, scenario.basePosition, scenario.marketPrice).map((row, index) => ({ level: index + 1, price: row.level.price, shares: row.level.shares, grossAmount: row.grossAmount, feeMode: row.level.feeMode, feeValue: row.level.feeValue, feeAmount: row.feeAmount, totalAmount: row.totalAmount, cumulativeShares: row.cumulativePosition.shares, cumulativeBasis: row.cumulativePosition.shares * row.cumulativePosition.averagePrice, cumulativeAverage: row.cumulativePosition.averagePrice, currency: activeHolding().currency })); downloadText('dca-ladder.csv', ladderCsv(rows), 'text/csv;charset=utf-8'); });
+    document.querySelector<HTMLButtonElement>('#exportScenarioCsv')?.addEventListener('click', () => { const results = projectScenario(scenario).results; const rows = scenario.transactions.map((transaction, index) => { const result = results.find((item) => item.id === transaction.id); return { sequence: index + 1, scenarioName: scenario.name, scenarioStatus: scenario.status, transactionStatus: transaction.status, type: transaction.type, date: transaction.executionDate ?? transaction.createdAt, shares: result?.shares ?? transaction.shares, price: result?.price ?? transaction.price, feeMode: result?.feeMode ?? transaction.feeMode ?? 'percent', feeValue: result?.feeValue ?? transaction.feeValue ?? 0, grossAmount: result?.grossAmount ?? 0, feeAmount: result?.feeAmount ?? 0, totalPaid: result?.totalAmount ?? 0, netReceived: result?.netAmount ?? 0, sharesAfter: result?.sharesAfter ?? 0, averageAfter: result?.averageAfter ?? 0, averageChange: result?.averageChange ?? 0, realizedProfitLoss: result?.realizedProfitLoss ?? 0, note: transaction.note ?? '', brokerLabel: transaction.brokerLabel ?? '', applied: transaction.appliedAt ? 'Applied' : 'Not applied', currency: activeHolding().currency }; }); downloadText('scenario.csv', scenarioCsv(rows), 'text/csv;charset=utf-8'); });
+    const changeTransaction = (selector: string, apply: (transaction: ScenarioTransaction, value: string) => void): void => document.querySelectorAll<HTMLInputElement>(selector).forEach((input) => input.addEventListener('change', () => { const id = input.dataset.executionPrice ?? input.dataset.executionShares ?? input.dataset.actualFee ?? input.dataset.executionDate ?? input.dataset.transactionNote ?? input.dataset.brokerLabel; const transaction = scenario.transactions.find((item) => item.id === id); if (!transaction) return; apply(transaction, input.value); touchScenario(scenario); render(); }));
+    changeTransaction('[data-execution-price]', (transaction, value) => { transaction.executionPrice = nonNegative(value); });
+    changeTransaction('[data-execution-shares]', (transaction, value) => { transaction.executionShares = nonNegative(value); });
+    changeTransaction('[data-actual-fee]', (transaction, value) => { transaction.actualFee = value.trim() === '' ? undefined : nonNegative(value); });
+    changeTransaction('[data-execution-date]', (transaction, value) => { transaction.executionDate = value || undefined; });
+    changeTransaction('[data-transaction-note]', (transaction, value) => { transaction.note = value; });
+    changeTransaction('[data-broker-label]', (transaction, value) => { transaction.brokerLabel = value; });
+    document.querySelectorAll<HTMLButtonElement>('[data-transaction-status]').forEach((button) => button.addEventListener('click', () => { const transaction = scenario.transactions.find((item) => item.id === button.dataset.transactionStatus); if (!transaction) return; transaction.status = button.dataset.status === 'executed' ? 'executed' : button.dataset.status === 'cancelled' ? 'cancelled' : 'planned'; if (transaction.status === 'executed' && !transaction.executionDate) transaction.executionDate = new Date().toISOString().slice(0, 16); touchScenario(scenario); render(); }));
+    document.querySelector<HTMLButtonElement>('#resetStressPrices')?.addEventListener('click', () => { scenario.stressPrices = defaultStressPrices(); touchScenario(scenario); render(); });
+    document.querySelector<HTMLButtonElement>('#addStressPrice')?.addEventListener('click', () => { const value = window.prompt('Enter an absolute stress-test price'); if (value === null) return; const price = Number(value); if (!Number.isFinite(price) || price < 0) { notice = 'Enter a price of zero or greater.'; render(); return; } scenario.stressPrices.push({ id: createId(), kind: 'absolute', value: price }); touchScenario(scenario); render(); });
+    document.querySelector<HTMLButtonElement>('#toggleStressSort')?.addEventListener('click', () => { stressAscending = !stressAscending; render(); });
+    document.querySelectorAll<HTMLButtonElement>('[data-remove-stress]').forEach((button) => button.addEventListener('click', () => { scenario.stressPrices = scenario.stressPrices.filter((entry) => entry.id !== button.dataset.removeStress); touchScenario(scenario); render(); }));
+    document.querySelector<HTMLButtonElement>('#toggleReverseSell')?.addEventListener('click', () => { reverseSellExpanded = !reverseSellExpanded; render(); });
+    document.querySelectorAll<HTMLButtonElement>('[data-reverse-direction]').forEach((button) => button.addEventListener('click', () => { reverseDirection = button.dataset.reverseDirection === 'shares' ? 'shares' : 'price'; render(); }));
+    document.querySelectorAll<HTMLButtonElement>('[data-reverse-mode]').forEach((button) => button.addEventListener('click', () => { const mode = button.dataset.reverseMode; reverseMode = mode === 'return' || mode === 'netProceeds' || mode === 'breakEven' ? mode : 'profit'; render(); }));
+    document.querySelector<HTMLInputElement>('#reverseShares')?.addEventListener('change', (event) => { reverseShares = Number((event.currentTarget as HTMLInputElement).value); render(); });
+    document.querySelector<HTMLInputElement>('#reversePrice')?.addEventListener('change', (event) => { reversePrice = Number((event.currentTarget as HTMLInputElement).value); render(); });
+    document.querySelector<HTMLInputElement>('#reverseTarget')?.addEventListener('change', (event) => { reverseTarget = Number((event.currentTarget as HTMLInputElement).value); render(); });
+    document.querySelector<HTMLButtonElement>('#previewApplyExecuted')?.addEventListener('click', () => { pendingApplicationScenarioId = scenario.id; render(); });
+    document.querySelector<HTMLButtonElement>('#cancelApplyExecuted')?.addEventListener('click', () => { pendingApplicationScenarioId = null; render(); });
+    document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.addEventListener('click', () => { const holding = activeHolding(); const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario); if (!preview.valid || !preview.candidates.length) { notice = preview.error ?? 'There are no valid executed transactions to apply.'; pendingApplicationScenarioId = null; render(); return; } if (!window.confirm(`Apply ${preview.candidates.length} executed transaction(s) to the saved position?`)) return; holding.baseShares = preview.finalPosition.shares; holding.baseAverage = preview.finalPosition.averagePrice; const appliedAt = new Date().toISOString(); const ids = new Set(preview.candidates.map((transaction) => transaction.id)); scenario.transactions.forEach((transaction) => { if (ids.has(transaction.id)) transaction.appliedAt = appliedAt; }); touchScenario(scenario); pendingApplicationScenarioId = null; notice = `Applied ${preview.candidates.length} executed transaction(s) atomically.`; render(); });
+  }
 
   document.querySelector<HTMLButtonElement>('#resetHolding')?.addEventListener('click', () => {
     const current = activeHolding();

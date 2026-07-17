@@ -463,6 +463,57 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
 .import-preview { display: grid; gap: 7px; margin-top: 14px; padding: 13px; border: 1px solid rgba(16, 163, 127, 0.35); border-radius: 11px; background: var(--green-soft); color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
 .import-preview strong { color: var(--text-strong); }
 
+/* v1.7 planner components keep wide data as desktop grids and collapse to cards on phones. */
+.scenario-planner-panel .disclosure-content { display: none; }
+.scenario-planner-panel .disclosure-content.is-expanded { display: grid; gap: 14px; }
+.subpanel { min-width: 0; padding: 15px; border: 1px solid var(--border); border-radius: 13px; background: var(--bg-deep); }
+.subpanel .section-heading { margin-bottom: 12px; }
+.scenario-segment { width: fit-content; margin: 10px 0; }
+.scenario-segment button { min-width: 96px; }
+.compact-fee { margin-top: 10px; }
+.ladder-cards,
+.scenario-transaction-cards,
+.saved-scenario-cards,
+.comparison-cards,
+.stress-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.ladder-card,
+.saved-scenario-cards .scenario-card,
+.comparison-cards .scenario-card,
+.stress-cards .scenario-card,
+.scenario-transaction-cards .transaction-card { min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,0.018); }
+.ladder-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 10px 0; }
+.ladder-card dl,
+.scenario-transaction-cards dl,
+.saved-scenario-cards dl,
+.comparison-cards dl,
+.stress-cards dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 10px 0; }
+.ladder-card dl div,
+.scenario-transaction-cards dl div,
+.saved-scenario-cards dl div,
+.comparison-cards dl div,
+.stress-cards dl div { min-width: 0; }
+.ladder-card dt,
+.scenario-transaction-cards dt,
+.saved-scenario-cards dt,
+.comparison-cards dt,
+.stress-cards dt { color: var(--muted-dark); font-size: .66rem; }
+.ladder-card dd,
+.scenario-transaction-cards dd,
+.saved-scenario-cards dd,
+.comparison-cards dd,
+.stress-cards dd { margin: 3px 0 0; color: var(--text); font-size: .78rem; font-weight: 600; overflow-wrap: anywhere; }
+.status-tag { display: inline-flex; align-items: center; min-height: 23px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: .67rem; text-transform: capitalize; }
+.status-tag.executed,
+.status-tag.active,
+.status-tag.completed { border-color: rgba(16,163,127,.5); color: var(--green); background: var(--green-soft); }
+.status-tag.cancelled,
+.status-tag.archived { border-color: rgba(229,83,75,.4); color: #ff938d; }
+.scenario-card.archived { opacity: .62; }
+.compare-check { display: inline-flex; align-items: center; min-height: 36px; gap: 6px; color: var(--muted); font-size: .76rem; }
+.compare-check input { width: 17px; height: 17px; accent-color: var(--green); }
+.ladder-edit-grid input[type="datetime-local"] { min-width: 0; max-width: 100%; }
+.compact-empty { margin: 0; }
+
 @media (max-width: 1080px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -579,6 +630,21 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   .data-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .data-actions > * { width: 100%; min-width: 0; min-height: 44px; }
   .import-preview .button-row { display: grid; grid-template-columns: 1fr; }
+  .scenario-planner-panel .section-heading > .text-button { min-height: 40px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 9px; white-space: nowrap; }
+  .subpanel { padding: 12px; }
+  .scenario-segment { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scenario-segment button { min-width: 0; }
+  .ladder-cards,
+  .scenario-transaction-cards,
+  .saved-scenario-cards,
+  .comparison-cards,
+  .stress-cards { grid-template-columns: 1fr; }
+  .ladder-card,
+  .scenario-transaction-cards .transaction-card,
+  .saved-scenario-cards .scenario-card,
+  .comparison-cards .scenario-card,
+  .stress-cards .scenario-card { padding: 12px; }
+  .ladder-edit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 359px) {

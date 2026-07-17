@@ -1,8 +1,8 @@
 import type { FeeMode, TransactionType } from './calculator';
 
-export const BACKUP_SCHEMA_VERSION = 1;
+export const BACKUP_SCHEMA_VERSION = 2;
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024;
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.7.0';
 
 export type BackupScope = 'all' | 'active';
 export type BackupPosition = Record<string, unknown>;
@@ -15,6 +15,8 @@ export interface BackupDocument {
   scope: BackupScope;
   activeHoldingId?: string;
   positions: BackupPosition[];
+  scenarios: BackupPosition[];
+  comparisonScenarioIds: string[];
 }
 
 const blockedKeys = new Set(['__proto__', 'prototype', 'constructor']);
@@ -77,7 +79,29 @@ export function validateBackupPosition(value: unknown): BackupPosition {
   return position;
 }
 
-export function createBackup(positions: BackupPosition[], activeHoldingId: string | undefined, scope: BackupScope, exportedAt = new Date().toISOString()): BackupDocument {
+export function validateBackupScenario(value: unknown): BackupPosition {
+  const scenario = safeClone(value);
+  if (!isRecord(scenario) || typeof scenario.id !== 'string' || !scenario.id || typeof scenario.holdingId !== 'string' || !scenario.holdingId) {
+    throw new Error('Import rejected: every scenario needs an identifier and holding identifier.');
+  }
+  if (scenario.name !== undefined && typeof scenario.name !== 'string') throw new Error('Import rejected: a scenario name must be text.');
+  if (scenario.status !== undefined && !['draft', 'active', 'completed', 'archived'].includes(String(scenario.status))) throw new Error('Import rejected: scenario status is invalid.');
+  if (!isRecord(scenario.basePosition) || !isFiniteNonNegative(scenario.basePosition.shares) || !isFiniteNonNegative(scenario.basePosition.averagePrice)) {
+    throw new Error('Import rejected: scenario base position is invalid.');
+  }
+  if (scenario.marketPrice !== undefined && !isFiniteNonNegative(scenario.marketPrice)) throw new Error('Import rejected: scenario market price is invalid.');
+  if (scenario.transactions !== undefined) {
+    if (!Array.isArray(scenario.transactions)) throw new Error('Import rejected: scenario transactions must be a list.');
+    scenario.transactions.forEach((transaction, index) => {
+      validTransaction(transaction, index);
+      if (isRecord(transaction) && transaction.status !== undefined && !['planned', 'executed', 'cancelled'].includes(String(transaction.status))) throw new Error(`Import rejected: transaction ${index + 1} status is invalid.`);
+      if (isRecord(transaction) && transaction.actualFee !== undefined && !isFiniteNonNegative(transaction.actualFee)) throw new Error(`Import rejected: transaction ${index + 1} actual fee is invalid.`);
+    });
+  }
+  return scenario;
+}
+
+export function createBackup(positions: BackupPosition[], activeHoldingId: string | undefined, scope: BackupScope, exportedAt = new Date().toISOString(), scenarios: BackupPosition[] = [], comparisonScenarioIds: string[] = []): BackupDocument {
   return {
     application: 'Average Price Planner',
     backupSchemaVersion: BACKUP_SCHEMA_VERSION,
@@ -86,6 +110,8 @@ export function createBackup(positions: BackupPosition[], activeHoldingId: strin
     scope,
     ...(scope === 'all' && activeHoldingId ? { activeHoldingId } : {}),
     positions: positions.map((position) => validateBackupPosition(position)),
+    scenarios: scenarios.map((scenario) => validateBackupScenario(scenario)),
+    comparisonScenarioIds: comparisonScenarioIds.filter((id): id is string => typeof id === 'string'),
   };
 }
 
@@ -100,7 +126,7 @@ export function parseBackupJson(raw: string): BackupDocument {
   }
   const document = safeClone(parsed);
   if (!isRecord(document) || document.application !== 'Average Price Planner') throw new Error('Import rejected: this is not an Average Price Planner backup.');
-  const legacySchema = document.backupSchemaVersion === 0;
+  const legacySchema = document.backupSchemaVersion === 0 || document.backupSchemaVersion === 1;
   if (document.backupSchemaVersion !== BACKUP_SCHEMA_VERSION && !legacySchema) throw new Error('Import rejected: unsupported backup schema version.');
   const applicationVersion = typeof document.applicationVersion === 'string'
     ? document.applicationVersion
@@ -110,6 +136,10 @@ export function parseBackupJson(raw: string): BackupDocument {
   if (!scope) throw new Error('Import rejected: backup scope is invalid.');
   if (!Array.isArray(document.positions)) throw new Error('Import rejected: positions must be a list.');
   const positions = document.positions.map(validateBackupPosition);
+  const scenarios = Array.isArray(document.scenarios) ? document.scenarios.map(validateBackupScenario) : [];
+  const comparisonScenarioIds = Array.isArray(document.comparisonScenarioIds)
+    ? document.comparisonScenarioIds.filter((id): id is string => typeof id === 'string')
+    : [];
   if (document.activeHoldingId !== undefined && typeof document.activeHoldingId !== 'string') throw new Error('Import rejected: active position identifier is invalid.');
   return {
     application: 'Average Price Planner',
@@ -119,7 +149,34 @@ export function parseBackupJson(raw: string): BackupDocument {
     scope,
     ...(typeof document.activeHoldingId === 'string' ? { activeHoldingId: document.activeHoldingId } : {}),
     positions,
+    scenarios,
+    comparisonScenarioIds,
   };
+}
+
+export function mergeBackupScenarios(current: BackupPosition[], imported: BackupPosition[], newId: () => string): BackupPosition[] {
+  const used = new Set(current.map((scenario) => String(scenario.id)));
+  const usedTransactionIds = new Set(current.flatMap((scenario) => Array.isArray(scenario.transactions)
+    ? scenario.transactions.filter(isRecord).map((transaction) => String(transaction.id))
+    : []));
+  const merged = current.map((scenario) => safeClone(scenario) as BackupPosition);
+  for (const source of imported) {
+    const scenario = validateBackupScenario(source);
+    let id = String(scenario.id);
+    while (used.has(id)) id = newId();
+    used.add(id);
+    const transactions = Array.isArray(scenario.transactions)
+      ? scenario.transactions.map((item) => {
+          const transaction = safeClone(item) as BackupPosition;
+          let transactionId = String(transaction.id);
+          while (usedTransactionIds.has(transactionId)) transactionId = newId();
+          usedTransactionIds.add(transactionId);
+          return { ...transaction, id: transactionId };
+        })
+      : [];
+    merged.push({ ...scenario, id, transactions });
+  }
+  return merged;
 }
 
 export function mergeBackupPositions(current: BackupPosition[], imported: BackupPosition[], newId: () => string): BackupPosition[] {
@@ -162,5 +219,42 @@ export interface CsvPlanRow {
 export function planCsv(rows: CsvPlanRow[]): string {
   const headers = ['Sequence', 'Type', 'Price', 'Shares', 'Gross value', 'Fee mode', 'Fee input', 'Fee amount', 'Total paid', 'Net received', 'Shares after', 'Average after', 'Average change', 'Realized profit/loss', 'Currency'];
   const body = rows.map((row) => [row.sequence, row.type, row.price, row.shares, row.grossAmount, row.feeMode, row.feeValue, row.feeAmount, row.totalPaid, row.netReceived, row.sharesAfter, row.averageAfter, row.averageChange, row.realizedProfitLoss, row.currency].map(csvSafeCell).join(','));
+  return `\uFEFF${headers.map(csvSafeCell).join(',')}\r\n${body.join('\r\n')}${body.length ? '\r\n' : ''}`;
+}
+
+export interface ScenarioCsvRow extends CsvPlanRow {
+  scenarioName: string;
+  scenarioStatus: string;
+  transactionStatus: string;
+  date: string;
+  note: string;
+  brokerLabel: string;
+  applied: string;
+}
+
+export function scenarioCsv(rows: ScenarioCsvRow[]): string {
+  const headers = ['Scenario name', 'Scenario status', 'Transaction status', 'Type', 'Planned/executed date', 'Quantity', 'Price', 'Fee mode', 'Fee value', 'Gross value', 'Net value', 'Note', 'Broker/account', 'Applied status', 'Currency'];
+  const body = rows.map((row) => [row.scenarioName, row.scenarioStatus, row.transactionStatus, row.type, row.date, row.shares, row.price, row.feeMode, row.feeValue, row.grossAmount, row.netReceived || row.totalPaid, row.note, row.brokerLabel, row.applied, row.currency].map(csvSafeCell).join(','));
+  return `\uFEFF${headers.map(csvSafeCell).join(',')}\r\n${body.join('\r\n')}${body.length ? '\r\n' : ''}`;
+}
+
+export interface LadderCsvRow {
+  level: number;
+  price: number;
+  shares: number;
+  grossAmount: number;
+  feeMode: FeeMode;
+  feeValue: number;
+  feeAmount: number;
+  totalAmount: number;
+  cumulativeShares: number;
+  cumulativeBasis: number;
+  cumulativeAverage: number;
+  currency: string;
+}
+
+export function ladderCsv(rows: LadderCsvRow[]): string {
+  const headers = ['Level', 'Buy price', 'Quantity', 'Gross purchase value', 'Fee mode', 'Fee value', 'Fee', 'Total cash required', 'Cumulative quantity', 'Cumulative cost basis', 'Cumulative average price', 'Currency'];
+  const body = rows.map((row) => [row.level, row.price, row.shares, row.grossAmount, row.feeMode, row.feeValue, row.feeAmount, row.totalAmount, row.cumulativeShares, row.cumulativeBasis, row.cumulativeAverage, row.currency].map(csvSafeCell).join(','));
   return `\uFEFF${headers.map(csvSafeCell).join(',')}\r\n${body.join('\r\n')}${body.length ? '\r\n' : ''}`;
 }

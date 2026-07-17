@@ -2,6 +2,16 @@
 
 A browser-local planner for stock purchases, average-down analysis, future sales, and multiple saved holdings.
 
+## Version 1.7.0
+
+This release adds a browser-local Scenario Planner and fee-aware DCA Ladder without changing the static GitHub Pages architecture.
+
+- **Saved scenarios** attach to a position, retain an immutable starting snapshot, support draft/active/completed/archived lifecycle states, and can be safely loaded into the separate planner workspace.
+- **DCA Ladder** supports 2–20 linear or equal-percentage levels, all-in equal-cash allocation, equal shares, custom rows, both percentage and fixed fees, editable generated rows, and a spreadsheet-safe CSV export.
+- **Execution workflow** records planned, executed, or cancelled rows. Actual price, quantity, currency-fee override, date, note, and broker label remain in scenario history until an explicit atomic application updates the current position.
+- **Scenario tools** include comparison of up to four active scenarios, reverse sell price/quantity solvers, sortable stress prices, scenario CSV, and v2 backups containing scenarios and comparison selection.
+- Existing v1.6 browser data migrates in place to the internal v4 store; its existing plan rows receive safe Planned metadata and continue to calculate as before.
+
 ## Version 1.6.0
 
 This release adds fee-aware target tools and browser-local data portability while preserving the completed desktop and mobile layouts.
