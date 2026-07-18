@@ -30,6 +30,31 @@ Add a Help topic to both typed catalogs with the same stable slug and related ca
 
 Translation catalogs are compiler-checked for English/Russian key parity. UI validation must select a stable message code and then translate that code; it must not infer a translation by matching an English diagnostic string. `t()` safely falls back to English when a catalog entry is unavailable, so implementation code must never render raw keys or diagnostic codes.
 
+### Russian editorial standard
+
+Russian copy should read as a clear financial-planning interface, not as a literal technical translation. Use direct action labels (`Создать копию`, `Открыть сценарий`, `Учесть исполненные сделки`) and explain the financial effect before implementation details. Avoid developer metaphors such as “снимок”, “песочница”, “рабочее пространство” and avoid presenting internal mechanics as the primary message.
+
+Use the same calculation terms throughout the interface and Help:
+
+| English | Russian |
+| --- | --- |
+| Average price | Средняя цена |
+| Cost basis | Себестоимость позиции |
+| Market value | Рыночная стоимость |
+| Gross purchase / Gross sale | Сумма покупки / продажи до комиссии |
+| Net proceeds | Сумма после комиссии |
+| Realized / Unrealized P/L | Реализованный / Нереализованный P/L |
+| Break-even | Безубыточность |
+| Scenario workspace | Рабочая копия сценария |
+| Maximum capital requirement | Максимум необходимых средств |
+| Cash released | Средства, полученные от продаж |
+
+English terms may appear in parentheses on first use in the glossary, Help, or an otherwise technical explanation. Do not mix competing Russian terms for the same metric in nearby UI copy.
+
+Keep the Russian Help catalog in substantive parity with English: every stable slug and related section must match, and each English worked example needs a Russian worked example with the same inputs, outputs, and fee behavior. Match examples by intent rather than copying English word order. Preserve technically meaningful words such as “сценарий”, “план”, “запланированный”, “исполненный”, and “отменённый”.
+
+Russian interface strings with counts must use `plural()` in `i18n.ts` so singular, paucal, and plural forms are selected correctly; tests must cover 1, 2, 5, and 21. Keep `Intl` formatting and localized decimal parsing at display/input boundaries only.
+
 Use `Intl.NumberFormat`, `Intl.DateTimeFormat`, and `Intl.PluralRules` through `i18n.ts` for display values. `parseLocalizedDecimal()` accepts either a Russian decimal comma or a decimal point in supported numeric inputs and rejects ambiguous grouping/separator formats. Convert the result to a number before calculations; do not localize values retained in state.
 
 The portfolio store remains schema v4 and the backup document remains schema v2. Locale preference uses `average-price-planner:locale`, separately from `average-down-optimizer:v2`, and is excluded from JSON backups. JSON and CSV preserve their canonical numeric, enum, date, and UTF-8/BOM formats regardless of UI locale.

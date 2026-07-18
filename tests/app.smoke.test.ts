@@ -82,7 +82,7 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('#toggleScenarioPlanner')?.click();
     expect(document.body.textContent).toContain('Название сценария');
     expect(document.body.textContent).toContain('Лестница DCA');
-    expect(document.body.textContent).toContain('Равными суммами');
+    expect(document.body.textContent).toContain('Равная сумма на уровень');
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     document.querySelector<HTMLButtonElement>('[data-delete-scenario]')?.click();
     confirm.mockRestore();
@@ -91,8 +91,8 @@ describe('application smoke test', () => {
 
   it('keeps buying-guide result cards localized in Russian', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
-    expect(document.body.textContent).toContain('Ориентир убывающей отдачи');
-    expect(document.body.textContent).toContain('Меньшая покупка с близким эффектом');
+    expect(document.body.textContent).toContain('Точка снижения эффективности');
+    expect(document.body.textContent).toContain('Меньшая покупка с похожим снижением средней');
     expect(document.body.textContent).not.toContain('Diminishing-return reference');
     expect(document.body.textContent).not.toContain('Smaller buy with similar benefit');
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();

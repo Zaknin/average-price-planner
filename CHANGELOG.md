@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.1
+
+- Polished Russian interface terminology for calculations, scenarios, DCA, comparison, execution, and notifications.
+- Expanded Russian Help to the English catalog’s worked-example coverage and clarified calculation behavior.
+- Added Russian localization editorial standards and automated Help parity and terminology checks.
+
 ## 1.9.0
 
 - Added a Russian interface and Russian Help Center on the existing Help routes.

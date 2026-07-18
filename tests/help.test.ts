@@ -102,7 +102,7 @@ describe('Help Center content and routes', () => {
     expect(helpRouteFromHash('#help/reading-results')).toBe('reading-results');
     renderHelp(app, 'reading-results', { backToCalculator: vi.fn() });
     expect(app.textContent).toContain('Как читать результаты');
-    expect(app.textContent).toContain('Валовая сумма');
+    expect(app.textContent).toContain('Сумма до комиссии');
     expect(app.querySelector('[data-locale="ru"]')?.classList.contains('active')).toBe(true);
 
     renderHelp(app, 'home', { backToCalculator: vi.fn() });

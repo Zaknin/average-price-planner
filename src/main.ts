@@ -1379,7 +1379,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>${t('documentTitle')} <span class="release-tag">v1.9.0</span></h1>
+          <h1>${t('documentTitle')} <span class="release-tag">v1.9.1</span></h1>
           <p>${t('appTagline')}</p>
         </div>
       </div>
