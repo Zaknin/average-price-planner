@@ -420,7 +420,7 @@ function activeFee(holding = activeHolding()): FeeSettings {
 }
 
 function feeLabel(fee: FeeSettings, holding = activeHolding()): string {
-  return fee.mode === 'percent' ? `${fee.value}%` : `Fixed ${formatCurrency(fee.value, holding)}`;
+  return fee.mode === 'percent' ? `${fee.value}%` : getLocale() === 'ru' ? `${t('fixedFee')}: ${formatCurrency(fee.value, holding)}` : `Fixed ${formatCurrency(fee.value, holding)}`;
 }
 
 function formatCurrency(value: number, holding = activeHolding()): string {
@@ -688,20 +688,20 @@ function optimizerCards(position: Position, holding: HoldingState): string {
     <div class="optimizer-grid">
       ${metricCard(
         t('diminishingReference'),
-        `${formatQuantity(floorPoint.quantity)} ${t('sharesSuffix')}`,
+        `${sharePhrase(floorPoint.quantity)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`}`,
         t('eachExtraShareEffect', { percent: percent(floorPoint.marginalEfficiencyRemaining * 100) }),
         t('optimizerFinancialSummary', { gross: formatCurrency(floorPoint.grossAmount), fee: formatCurrency(floorPoint.feeAmount), total: formatCurrency(floorPoint.totalCost), average: formatCurrency(floorPoint.newAverage) }),
       )}
       ${metricCard(
         t('halfwayToBuyPrice'),
-        `${formatQuantity(halfPoint.quantity)} ${t('sharesSuffix')}`,
+        `${sharePhrase(halfPoint.quantity)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`}`,
         t('halfwayMove', { average: formatCurrency(position.averagePrice), price: formatCurrency(price) }),
         t('optimizerFinancialSummary', { gross: formatCurrency(halfPoint.grossAmount), fee: formatCurrency(halfPoint.feeAmount), total: formatCurrency(halfPoint.totalCost), average: formatCurrency(halfPoint.newAverage) }),
       )}
       ${budgetPoint && fullBudgetPoint
         ? metricCard(
         t('smallerBuySimilarBenefit'),
-            `${formatQuantity(budgetPoint.quantity)} ${t('sharesSuffix')}`,
+            `${sharePhrase(budgetPoint.quantity)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`}`,
             t('capturesBudgetBenefit', { percent: percent(holding.budgetBenefitTarget * 100, 0) }),
             t('keepUnspent', { gross: formatCurrency(budgetPoint.grossAmount), fee: formatCurrency(budgetPoint.feeAmount), total: formatCurrency(budgetPoint.totalCost), unspent: formatCurrency(fullBudgetPoint.totalCost - budgetPoint.totalCost) }),
           )
@@ -743,7 +743,7 @@ function scenarioTable(position: Position, holding: HoldingState): string {
   const scenarioCards = values.map((item) => `
     <article class="scenario-card">
       <div class="scenario-card-heading">
-        <strong>${formatQuantity(item.quantity)} ${t('sharesSuffix')}</strong>
+        <strong>${sharePhrase(item.quantity)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`}</strong>
         <span>${t('total')} ${formatCurrency(item.totalCost)}</span>
       </div>
       <dl>
@@ -852,7 +852,7 @@ function curveSvg(position: Position, holding: HoldingState): string {
         <line x1="${padX}" y1="${padY + plotH / 2}" x2="${padX + plotW}" y2="${padY + plotH / 2}" class="grid" />
         <polyline points="${points.join(' ')}" class="curve-line" />
         <circle cx="${markerX}" cy="${markerY}" r="6" class="curve-marker" />
-        <text x="${Math.min(markerX + 10, width - 230)}" y="${Math.max(markerY - 10, 18)}" class="chart-label">${formatQuantity(markerQty)} ${t('sharesSuffix')} · ${t('reductionReached', { percent: percent(marker.theoreticalReductionCaptured * 100) })}</text>
+        <text x="${Math.min(markerX + 10, width - 230)}" y="${Math.max(markerY - 10, 18)}" class="chart-label">${sharePhrase(markerQty)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} · ${t('reductionReached', { percent: percent(marker.theoreticalReductionCaptured * 100) })}</text>
         <text x="8" y="${padY + 4}" class="chart-label">100%</text>
         <text x="16" y="${padY + plotH / 2 + 4}" class="chart-label">50%</text>
         <text x="25" y="${padY + plotH + 4}" class="chart-label">0%</text>
@@ -890,7 +890,7 @@ function marketSnapshotPanel(position: Position | null, holding: HoldingState): 
       </div>
       <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
         <div class="snapshot-grid">
-          ${metricCard(t('currentValue'), formatCurrency(snapshot.marketValue, holding), `${formatQuantity(position!.shares, holding)} ${t('sharesSuffix')} @ ${formatCurrency(holding.currentMarketPrice, holding)}`)}
+          ${metricCard(t('currentValue'), formatCurrency(snapshot.marketValue, holding), `${sharePhrase(position!.shares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} @ ${formatCurrency(holding.currentMarketPrice, holding)}`)}
           ${metricCard(t('totalCostBasis'), formatCurrency(snapshot.basis, holding), `${t('averageCost')} ${formatCurrency(position!.averagePrice, holding)}`)}
           ${metricCard(t('grossProfitLoss'), formatCurrency(snapshot.grossUnrealizedProfitLoss, holding), t('grossReturn', { percent: percent(snapshot.grossReturnPercent) }), '', snapshot.grossUnrealizedProfitLoss >= 0 ? 'positive' : 'negative')}
           ${metricCard(t('afterFees'), formatCurrency(snapshot.netUnrealizedProfitLoss, holding), t('liquidationFee', { fee: formatCurrency(snapshot.estimatedSellFee, holding), net: formatCurrency(snapshot.netLiquidationValue, holding) }), '', netTone)}
@@ -1090,7 +1090,7 @@ function scenarioTransactionsPanel(scenario: Scenario, holding: HoldingState): s
   return `<div class="scenario-transaction-cards">${scenario.transactions.map((transaction) => `
     <article class="transaction-card">
       <div class="transaction-card-heading"><span class="action-tag ${transaction.type}">${transaction.type === 'buy' ? t('buy') : t('sell')}</span><span class="status-tag ${transaction.status}">${t(transaction.status)}</span></div>
-      <dl><div><dt>${t('planned')}</dt><dd>${formatQuantity(transaction.shares, holding)} @ ${formatCurrency(transaction.price, holding)}</dd></div><div><dt>${t('fee')}</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>${t('executionDate')}</dt><dd>${transaction.executionDate ? formatDateTime(transaction.executionDate) : t('notRecorded')}</dd></div><div><dt>${t('applied')}</dt><dd>${transaction.appliedAt ? t('applied') : t('notApplied')}</dd></div></dl>
+      <dl><div><dt>${t('planned')}</dt><dd>${sharePhrase(transaction.shares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} @ ${formatCurrency(transaction.price, holding)}</dd></div><div><dt>${t('fee')}</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>${t('executionDate')}</dt><dd>${transaction.executionDate ? formatDateTime(transaction.executionDate) : t('notRecorded')}</dd></div><div><dt>${t('applied')}</dt><dd>${transaction.appliedAt ? t('applied') : t('notApplied')}</dd></div></dl>
       <div class="ladder-edit-grid"><label class="field"><span>${t('actualPrice')}</span><input data-execution-price="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionPrice ?? transaction.price}" /></label><label class="field"><span>${t('actualShares')}</span><input data-execution-shares="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionShares ?? transaction.shares}" /></label><label class="field"><span>${t('actualFee')}</span><input data-actual-fee="${transaction.id}" type="number" min="0" step="any" value="${transaction.actualFee ?? ''}" placeholder="${t('usePlanned')}" /></label><label class="field"><span>${t('executionDate')}</span><input data-execution-date="${transaction.id}" type="datetime-local" value="${transaction.executionDate ?? ''}" /></label></div>
       <label class="field"><span>${t('note')}</span><input data-transaction-note="${transaction.id}" type="text" value="${escapeHtml(transaction.note ?? '')}" placeholder="${t('optionalNote')}" /></label>
       <label class="field"><span>${t('brokerAccount')}</span><input data-broker-label="${transaction.id}" type="text" value="${escapeHtml(transaction.brokerLabel ?? '')}" placeholder="${t('optionalLabel')}" /></label>
@@ -1147,7 +1147,7 @@ function reverseSellPanel(scenario: Scenario, holding: HoldingState): string {
 function executionApplicationPanel(scenario: Scenario, holding: HoldingState): string {
   const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario);
   const isPending = pendingApplicationScenarioId === scenario.id;
-  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">${t('applyExecuted')}</span><h3>${t('reviewBeforeUpdate')}</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>${t('reviewExecutedTrades')}</button></div></div>${isPending ? `<div class="import-preview"><strong>${t('reviewBeforeApplying')}</strong><span>${t('rowsToApply')}: ${formatLocalizedNumber(preview.candidates.length)}. ${t('skippedRows')}: ${formatLocalizedNumber(preview.skipped.length)}.</span>${preview.valid ? `<span>${formatQuantity(preview.finalPosition.shares, holding)} ${t('sharesSuffix')} · ${formatCurrency(preview.finalPosition.averagePrice, holding)} · ${t('totalFees')} ${formatCurrency(preview.totalFees, holding)} · ${t('totalProfitLoss')} ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">${t('confirmPositionUpdate')}</button><button id="cancelApplyExecuted" class="text-button">${t('cancel')}</button></div>` : `<span class="negative">${plannerMessage(preview.errorCode)}</span>`}</div>` : `<p class="helper-text">${t('eligibleExecutedHelp')}</p>`}</section>`;
+  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">${t('applyExecuted')}</span><h3>${t('reviewBeforeUpdate')}</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>${t('reviewExecutedTrades')}</button></div></div>${isPending ? `<div class="import-preview"><strong>${t('reviewBeforeApplying')}</strong><span>${t('rowsToApply')}: ${formatLocalizedNumber(preview.candidates.length)}. ${t('skippedRows')}: ${formatLocalizedNumber(preview.skipped.length)}.</span>${preview.valid ? `<span>${sharePhrase(preview.finalPosition.shares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} · ${formatCurrency(preview.finalPosition.averagePrice, holding)} · ${t('totalFees')} ${formatCurrency(preview.totalFees, holding)} · ${t('totalProfitLoss')} ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">${t('confirmPositionUpdate')}</button><button id="cancelApplyExecuted" class="text-button">${t('cancel')}</button></div>` : `<span class="negative">${plannerMessage(preview.errorCode)}</span>`}</div>` : `<p class="helper-text">${t('eligibleExecutedHelp')}</p>`}</section>`;
 }
 
 function savedScenariosPanel(holding: HoldingState): string {
@@ -1404,7 +1404,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>${t('documentTitle')} <span class="release-tag">v1.9.2</span></h1>
+          <h1>${t('documentTitle')} <span class="release-tag">v1.9.3</span></h1>
           <p>${t('appTagline')}</p>
         </div>
       </div>

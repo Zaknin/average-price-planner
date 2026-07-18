@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.3
+
+- Completed Russian runtime pluralization coverage and import-preview wording.
+- Removed remaining hard-coded English fee wording and standardized executed-transaction terminology.
+- Refined Russian Help, glossary-adjacent wording, and README terminology.
+- No calculation, storage, backup, JSON, or CSV changes.
+
 ## 1.9.2
 
 - Improved natural Russian wording across the calculator and Help.
