@@ -39,6 +39,7 @@ import {
   stressPrices,
   summarizeScenario,
 } from './planner';
+import { helpHash, helpRouteFromHash, renderHelp } from './help';
 
 type HoldingState = {
   id: string;
@@ -113,6 +114,8 @@ let reverseTarget = 0;
 let pendingApplicationScenarioId: string | null = null;
 let reverseMode: 'breakEven' | 'profit' | 'return' | 'netProceeds' = 'profit';
 let reverseDirection: 'price' | 'shares' = 'price';
+let inputDrafts: Record<string, string> = {};
+let helpReturnContext: { sectionId: string; scrollY: number } | null = null;
 
 function createId(): string {
   const cryptoObject = globalThis.crypto as Crypto | undefined;
@@ -381,7 +384,31 @@ function updateHoldingFromInputs(): void {
   holding.currentMarketPrice = numberFromInput('currentMarketPrice');
   const activeFee = holding.action === 'buy' ? holding.buyFee : holding.sellFee;
   activeFee.value = numberFromInput('transactionFee');
+  inputDrafts = {};
   saveStore();
+}
+
+function captureInputDrafts(): void {
+  document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[id], select[id]').forEach((element) => {
+    if (element.type !== 'checkbox' && element.type !== 'file') inputDrafts[element.id] = element.value;
+  });
+}
+
+function openHelp(topic = 'home', sectionId = ''): void {
+  captureInputDrafts();
+  helpReturnContext = { sectionId, scrollY: window.scrollY };
+  const nextHash = helpHash(topic);
+  if (window.location.hash === nextHash) render();
+  else window.location.hash = nextHash;
+}
+
+function backToCalculator(): void {
+  if (window.location.hash) window.location.hash = '';
+  else render();
+}
+
+function contextualHelpLink(topic: string): string {
+  return `<button type="button" class="context-help" data-help-open="${topic}" aria-label="Learn how ${topic.replaceAll('-', ' ')} works">Learn how this works</button>`;
 }
 
 function activeFee(holding = activeHolding()): FeeSettings {
@@ -813,9 +840,9 @@ function marketSnapshotPanel(position: Position | null, holding: HoldingState): 
     : null;
   if (!snapshot.available) {
     return `
-      <section class="panel market-panel">
+      <section id="market-snapshot" class="panel market-panel">
         <div class="section-heading compact"><div><span class="eyebrow">Current price</span><h2>Position snapshot</h2></div>
-          <button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button>
+          <div class="heading-actions">${contextualHelpLink('market-snapshot')}<button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button></div>
         </div>
         <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
           <div class="empty-state compact-empty">${escapeHtml(snapshot.reason ?? 'Enter a current market price to see this snapshot.')}</div>
@@ -824,9 +851,9 @@ function marketSnapshotPanel(position: Position | null, holding: HoldingState): 
   }
   const netTone = snapshot.netUnrealizedProfitLoss >= 0 ? 'positive' : 'negative';
   return `
-    <section class="panel market-panel">
+    <section id="market-snapshot" class="panel market-panel">
       <div class="section-heading compact"><div><span class="eyebrow">Current price</span><h2>Position snapshot</h2></div>
-        <button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button>
+        <div class="heading-actions">${contextualHelpLink('market-snapshot')}<button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button></div>
       </div>
       <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
         <div class="snapshot-grid">
@@ -886,9 +913,9 @@ function targetsPanel(position: Position, holding: HoldingState): string {
     <p class="simple-note">Remaining position: ${formatQuantity(sellResult.remainingPosition.shares, holding)} shares${sellResult.remainingPosition.shares ? ` at ${formatCurrency(sellResult.remainingPosition.averagePrice, holding)} average` : ', closed'}.</p>`
     : `<div class="plain-summary warning-summary"><span>Sale target</span><strong>${escapeHtml(sellResult.reason ?? 'Enter valid sale details.')}</strong></div>`;
   return `
-    <section class="panel targets-panel">
+    <section id="target-tools" class="panel targets-panel">
       <div class="section-heading"><div><span class="eyebrow">Targets</span><h2>Plan an average or exit price</h2></div>
-        <button id="toggleTargets" class="text-button" aria-expanded="${targetsExpanded}" aria-controls="targetsContent">${targetsExpanded ? 'Hide targets' : 'Show targets'}</button>
+        <div class="heading-actions">${contextualHelpLink('target-tools')}<button id="toggleTargets" class="text-button" aria-expanded="${targetsExpanded}" aria-controls="targetsContent">${targetsExpanded ? 'Hide targets' : 'Show targets'}</button></div>
       </div>
       <div id="targetsContent" class="disclosure-content ${targetsExpanded ? 'is-expanded' : ''}">
         <div class="segmented-control target-tabs" aria-label="Target calculator"><button data-target-tab="average" class="${targetTab === 'average' ? 'active' : ''}">Target average</button><button data-target-tab="sell" class="${targetTab === 'sell' ? 'active' : ''}">Break-even / profit</button></div>
@@ -910,8 +937,8 @@ function targetsPanel(position: Position, holding: HoldingState): string {
 function dataManagementPanel(holding: HoldingState): string {
   const preview = pendingImport ? (() => { const scenarioTransactions = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.length : 0), 0); const executed = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && (transaction as { status?: unknown }).status === 'executed').length : 0), 0); const applied = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && Boolean((transaction as { appliedAt?: unknown }).appliedAt)).length : 0), 0); return `<div class="import-preview"><strong>Backup preview</strong><span>${pendingImport.positions.length} positions · ${pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0)} plan transactions · ${pendingImport.scenarios.length} scenarios</span><span>${scenarioTransactions} scenario transactions · ${executed} executed · ${applied} applied</span><span>Exported ${escapeHtml(pendingImport.exportedAt)} · backup schema ${pendingImport.backupSchemaVersion}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">Merge with current data</button><button id="applyReplaceImport" class="text-button danger-text">Replace all current data</button></div></div>`; })() : '';
   return `
-    <section class="panel data-panel">
-      <div class="section-heading"><div><span class="eyebrow">Data management</span><h2>Backup, restore, and export</h2></div></div>
+    <section id="data-management" class="panel data-panel">
+      <div class="section-heading"><div><span class="eyebrow">Data management</span><h2>Backup, restore, and export</h2></div>${contextualHelpLink('backup-export')}</div>
       <p class="helper-text">Everything stays in this browser. Different website origins keep separate browser data.</p>
       <div class="button-row data-actions"><button id="exportAll" class="secondary-button">Export all positions</button><button id="exportActive" class="secondary-button">Export active position</button><button id="exportCsv" class="secondary-button" ${holding.transactions.length ? '' : 'disabled'}>Export plan CSV</button><label class="secondary-button file-button">Import JSON<input id="importJson" type="file" accept="application/json,.json" hidden /></label></div>
       ${preview}
@@ -1006,8 +1033,8 @@ function ladderPanel(scenario: Scenario, holding: HoldingState): string {
       <div class="button-row"><button class="text-button" data-ladder-up="${row.level.id}" ${index === 0 ? 'disabled' : ''}>Move up</button><button class="text-button" data-ladder-down="${row.level.id}" ${index === projection.length - 1 ? 'disabled' : ''}>Move down</button><button class="text-button" data-ladder-duplicate="${row.level.id}">Duplicate</button><button class="text-button danger-text" data-ladder-remove="${row.level.id}">Remove</button></div>
     </article>`).join('');
   return `
-    <section class="subpanel ladder-panel">
-      <div class="section-heading compact"><div><span class="eyebrow">DCA ladder</span><h3>Build staged buys</h3></div><button id="exportLadderCsv" class="text-button" ${projection.length ? '' : 'disabled'}>Export ladder CSV</button></div>
+    <section id="dca-ladder" class="subpanel ladder-panel">
+      <div class="section-heading compact"><div><span class="eyebrow">DCA ladder</span><h3>Build staged buys</h3></div><div class="heading-actions">${contextualHelpLink('dca-ladder')}<button id="exportLadderCsv" class="text-button" ${projection.length ? '' : 'disabled'}>Export ladder CSV</button></div></div>
       <div class="field-grid three">
         ${field('ladderLevels', 'Levels', ladder.levelCount, 'number', '4', '1')}
         ${field('ladderStart', 'Start price', ladder.startPrice, 'number', '40')}
@@ -1049,8 +1076,8 @@ function scenarioPlannerPanel(holding: HoldingState): string {
     ${reverseSellPanel(scenario, holding)}
     ${executionApplicationPanel(scenario, holding)}` : `<div class="empty-state">Create or load a saved scenario to build a DCA ladder, record execution values, compare outcomes, and stress-test prices.</div>`;
   return `
-    <section class="panel scenario-planner-panel">
-      <div class="section-heading"><div><span class="eyebrow">Scenario planner</span><h2>Build before changing your position</h2></div><button id="toggleScenarioPlanner" class="text-button" aria-expanded="${scenarioPanelExpanded}" aria-controls="scenarioPlannerContent">${scenarioPanelExpanded ? 'Hide planner' : 'Show planner'}</button></div>
+    <section id="scenario-planner" class="panel scenario-planner-panel">
+      <div class="section-heading"><div><span class="eyebrow">Scenario planner</span><h2>Build before changing your position</h2></div><div class="heading-actions">${contextualHelpLink('scenario-planner')}<button id="toggleScenarioPlanner" class="text-button" aria-expanded="${scenarioPanelExpanded}" aria-controls="scenarioPlannerContent">${scenarioPanelExpanded ? 'Hide planner' : 'Show planner'}</button></div></div>
       <div id="scenarioPlannerContent" class="disclosure-content ${scenarioPanelExpanded ? 'is-expanded' : ''}">${content}</div>
     </section>`;
 }
@@ -1060,7 +1087,7 @@ function stressPanel(scenario: Scenario, holding: HoldingState): string {
   const baseMarket = scenario.marketPrice || holding.currentMarketPrice;
   const entries = stressPrices(scenario.stressPrices, baseMarket).filter((item) => Number.isFinite(item.price) && item.price >= 0).sort((a, b) => stressAscending ? a.price - b.price : b.price - a.price);
   return `
-    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Stress test</span><h3>Price outcomes</h3></div><button id="toggleStressSort" class="text-button">Sort ${stressAscending ? 'descending' : 'ascending'}</button></div>
+    <section id="stress-tests" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Stress test</span><h3>Price outcomes</h3></div><div class="heading-actions">${contextualHelpLink('stress-tests')}<button id="toggleStressSort" class="text-button">Sort ${stressAscending ? 'descending' : 'ascending'}</button></div></div>
       <div class="button-row"><button id="resetStressPrices" class="text-button">Reset defaults</button><button id="addStressPrice" class="text-button">Add custom price</button></div>
       <div class="stress-cards">${entries.map(({ entry, price }) => {
         const marketValue = summary.finalPosition.shares * price;
@@ -1080,24 +1107,24 @@ function reverseSellPanel(scenario: Scenario, holding: HoldingState): string {
   const price = reversePrice ?? scenario.marketPrice;
   const result = reverseSell({ position: scenario.basePosition, fee: holding.sellFee, shareStep: holding.shareStep, mode: reverseMode, direction: reverseDirection, shares, price, targetValue: reverseTarget });
   return `
-    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Reverse sell</span><h3>Plan an exit</h3></div><button id="toggleReverseSell" class="text-button" aria-expanded="${reverseSellExpanded}">${reverseSellExpanded ? 'Hide' : 'Show'}</button></div>
+    <section id="reverse-sell" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Reverse sell</span><h3>Plan an exit</h3></div><div class="heading-actions">${contextualHelpLink('reverse-sell')}<button id="toggleReverseSell" class="text-button" aria-expanded="${reverseSellExpanded}">${reverseSellExpanded ? 'Hide' : 'Show'}</button></div></div>
     <div class="disclosure-content ${reverseSellExpanded ? 'is-expanded' : ''}"><div class="segmented-control scenario-segment"><button data-reverse-direction="price" class="${reverseDirection === 'price' ? 'active' : ''}">Solve price</button><button data-reverse-direction="shares" class="${reverseDirection === 'shares' ? 'active' : ''}">Solve shares</button></div><div class="segmented-control scenario-segment"><button data-reverse-mode="profit" class="${reverseMode === 'profit' ? 'active' : ''}">Profit</button><button data-reverse-mode="return" class="${reverseMode === 'return' ? 'active' : ''}">Return %</button><button data-reverse-mode="netProceeds" class="${reverseMode === 'netProceeds' ? 'active' : ''}">Net proceeds</button><button data-reverse-mode="breakEven" class="${reverseMode === 'breakEven' ? 'active' : ''}">Break even</button></div><div class="field-grid three">${field('reverseShares', 'Shares to sell', shares, 'number', '100')}${field('reversePrice', 'Sale price', price, 'number', '60')}${field('reverseTarget', reverseMode === 'return' ? 'Target return %' : reverseMode === 'netProceeds' ? 'Target net proceeds' : 'Profit target', reverseTarget, 'number', '500')}</div>${result.valid ? `<div class="result-strip six"><div><span>Required price</span><strong>${formatCurrency(result.requiredPrice, holding)}</strong></div><div><span>Quantity</span><strong>${formatQuantity(result.requiredShares, holding)}</strong></div><div><span>Gross / fee</span><strong>${formatCurrency(result.grossAmount, holding)} / ${formatCurrency(result.feeAmount, holding)}</strong></div><div><span>Net proceeds</span><strong>${formatCurrency(result.netAmount, holding)}</strong></div><div><span>Realized P/L</span><strong>${formatCurrency(result.realizedProfitLoss, holding)}</strong></div><div><span>Remaining shares</span><strong>${formatQuantity(result.remainingPosition.shares, holding)}</strong></div></div>` : `<div class="plain-summary warning-summary"><strong>${escapeHtml(result.error ?? 'Enter valid reverse-sell inputs.')}</strong></div>`}</div></section>`;
 }
 
 function executionApplicationPanel(scenario: Scenario, holding: HoldingState): string {
   const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario);
   const isPending = pendingApplicationScenarioId === scenario.id;
-  return `<section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Apply execution</span><h3>Update saved position explicitly</h3></div><button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>Apply executed transactions</button></div>${isPending ? `<div class="import-preview"><strong>Application preview</strong><span>${preview.candidates.length} executed transaction${preview.candidates.length === 1 ? '' : 's'}; ${preview.skipped.length} skipped.</span>${preview.valid ? `<span>Result: ${formatQuantity(preview.finalPosition.shares, holding)} shares at ${formatCurrency(preview.finalPosition.averagePrice, holding)} · Fees ${formatCurrency(preview.totalFees, holding)} · Realized P/L ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">Confirm apply</button><button id="cancelApplyExecuted" class="text-button">Cancel</button></div>` : `<span class="negative">${escapeHtml(preview.error ?? 'The application is blocked.')}</span>`}</div>` : '<p class="helper-text">Only executed, not-yet-applied rows are considered. Planned and cancelled rows are skipped.</p>'}</section>`;
+  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Apply execution</span><h3>Update saved position explicitly</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>Apply executed transactions</button></div></div>${isPending ? `<div class="import-preview"><strong>Application preview</strong><span>${preview.candidates.length} executed transaction${preview.candidates.length === 1 ? '' : 's'}; ${preview.skipped.length} skipped.</span>${preview.valid ? `<span>Result: ${formatQuantity(preview.finalPosition.shares, holding)} shares at ${formatCurrency(preview.finalPosition.averagePrice, holding)} · Fees ${formatCurrency(preview.totalFees, holding)} · Realized P/L ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">Confirm apply</button><button id="cancelApplyExecuted" class="text-button">Cancel</button></div>` : `<span class="negative">${escapeHtml(preview.error ?? 'The application is blocked.')}</span>`}</div>` : '<p class="helper-text">Only executed, not-yet-applied rows are considered. Planned and cancelled rows are skipped.</p>'}</section>`;
 }
 
 function savedScenariosPanel(holding: HoldingState): string {
   const scenarios = scenarioForActiveHolding();
-  return `<section class="panel"><div class="section-heading"><div><span class="eyebrow">Saved scenarios</span><h2>Compare plans safely</h2></div><div class="button-row"><button id="newScenario" class="secondary-button">New scenario</button><button id="savePlanScenario" class="secondary-button">Save current plan</button></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${scenario.status}</span></div><p>${escapeHtml(scenario.note || 'No note')}</p><dl><div><dt>Final position</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)} @ ${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Total P/L</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">Load</button><button class="text-button" data-duplicate-scenario="${scenario.id}">Duplicate</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? 'Restore' : 'Archive'}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">Delete</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> Compare</label></div></article>`; }).join('')}</div>` : '<div class="empty-state">No saved scenarios for this position yet.</div>'}</section>`;
+  return `<section id="saved-scenarios" class="panel"><div class="section-heading"><div><span class="eyebrow">Saved scenarios</span><h2>Compare plans safely</h2></div><div class="heading-actions">${contextualHelpLink('saved-scenarios')}<div class="button-row"><button id="newScenario" class="secondary-button">New scenario</button><button id="savePlanScenario" class="secondary-button">Save current plan</button></div></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${scenario.status}</span></div><p>${escapeHtml(scenario.note || 'No note')}</p><dl><div><dt>Final position</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)} @ ${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Total P/L</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">Load</button><button class="text-button" data-duplicate-scenario="${scenario.id}">Duplicate</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? 'Restore' : 'Archive'}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">Delete</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> Compare</label></div></article>`; }).join('')}</div>` : '<div class="empty-state">No saved scenarios for this position yet.</div>'}</section>`;
 }
 
 function comparisonPanel(holding: HoldingState): string {
   const scenarios = store.scenarios.filter((scenario) => store.comparisonScenarioIds.includes(scenario.id) && scenario.status !== 'archived');
-  return `<section class="panel"><div class="section-heading"><div><span class="eyebrow">Compare</span><h2>Up to four scenarios</h2></div><button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? 'Hide comparison' : 'Show comparison'}</button></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="Remove from comparison">×</button></div><dl><div><dt>Starting position</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>Planned buys / sells</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>Total fees</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>Final quantity</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>Final average</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Market value</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>Realized P/L</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>Unrealized P/L</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>Break-even</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>Maximum cash required</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">Clear comparison</button>` : '<div class="empty-state">Select up to four active scenarios to compare their arithmetic outcomes.</div>'}</div></section>`;
+  return `<section id="scenario-comparison" class="panel"><div class="section-heading"><div><span class="eyebrow">Compare</span><h2>Up to four scenarios</h2></div><div class="heading-actions">${contextualHelpLink('scenario-comparison')}<button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? 'Hide comparison' : 'Show comparison'}</button></div></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="Remove from comparison">×</button></div><dl><div><dt>Starting position</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>Planned buys / sells</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>Total fees</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>Final quantity</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>Final average</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Market value</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>Realized P/L</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>Unrealized P/L</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>Break-even</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>Maximum cash required</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">Clear comparison</button>` : '<div class="empty-state">Select up to four active scenarios to compare their arithmetic outcomes.</div>'}</div></section>`;
 }
 
 function dateStamp(): string {
@@ -1307,15 +1334,21 @@ function field(
   step = 'any',
   mobileLabel = label,
 ): string {
+  const displayValue = inputDrafts[id] ?? String(value);
   return `
     <label class="field">
       <span><span class="desktop-field-label">${label}</span><span class="mobile-field-label">${mobileLabel}</span></span>
-      <input id="${id}" type="${type}" value="${escapeHtml(String(value))}" placeholder="${placeholder}" ${type === 'number' ? `step="${step}" min="0" inputmode="decimal"` : ''} autocomplete="off" />
+      <input id="${id}" type="${type}" value="${escapeHtml(displayValue)}" placeholder="${placeholder}" ${type === 'number' ? `step="${step}" min="0" inputmode="decimal"` : ''} autocomplete="off" />
     </label>
   `;
 }
 
 function render(): void {
+  const helpRoute = helpRouteFromHash();
+  if (helpRoute) {
+    renderHelp(app, helpRoute, { backToCalculator });
+    return;
+  }
   const holding = activeHolding();
   const { position, results } = effectivePosition(holding);
   const analyzablePosition = position && isFinitePositive(position.shares) && isFinitePositive(position.averagePrice)
@@ -1338,7 +1371,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner <span class="release-tag">v1.7</span></h1>
+          <h1>Average Price Planner <span class="release-tag">v1.8</span></h1>
           <p>Compare future buys and sales for each holding</p>
         </div>
       </div>
@@ -1367,7 +1400,7 @@ function render(): void {
           <p class="helper-text">Each ticker keeps its own holding, settings, and plan on this browser.</p>
         </section>
 
-        <section class="panel holding-panel">
+        <section id="position" class="panel holding-panel">
           ${holdingSummary(holding)}
           <div id="holdingEditor" class="holding-editor ${holdingEditorExpanded ? 'is-expanded' : ''}">
           <div class="section-heading">
@@ -1375,7 +1408,7 @@ function render(): void {
               <span class="eyebrow">Current holding</span>
               <h2>What you own now</h2>
             </div>
-            <button id="resetHolding" class="text-button">Reset</button>
+            <div class="heading-actions">${contextualHelpLink('positions')}<button id="resetHolding" class="text-button">Reset</button></div>
           </div>
 
           <div class="field-grid two">
@@ -1405,18 +1438,22 @@ function render(): void {
           </div>
           </div>
         </section>
+        <section class="panel help-entry-card">
+          <div><span class="eyebrow">Help &amp; guide</span><h2>Help &amp; guide</h2><p class="helper-text">Learn how each calculator section works.</p></div>
+          <button id="openHelp" class="text-button" aria-label="Open Help and guide">? Open help</button>
+        </section>
       </aside>
 
       <section class="content">
         ${notice ? `<div class="notice" role="status">${escapeHtml(notice)}</div>` : ''}
 
-        <section class="panel hero-panel">
+        <section id="transaction" class="panel hero-panel">
           <div class="section-heading action-heading">
             <div>
               <span class="eyebrow">Test a transaction</span>
               <h2>${isBuy ? `What if you buy more ${tickerLabel}?` : `What if you sell some ${tickerLabel}?`}</h2>
             </div>
-            ${analyzablePosition ? `<div class="position-pill">${formatQuantity(analyzablePosition.shares)} shares @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}
+            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${formatQuantity(analyzablePosition.shares)} shares @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}</div>
           </div>
 
           <div class="segmented-control" aria-label="Transaction type">
@@ -1455,12 +1492,12 @@ function render(): void {
         ${comparisonPanel(holding)}
 
         ${isBuy && analyzablePosition ? `
-          <section class="panel">
+          <section id="buying-guide" class="panel">
             <div class="section-heading">
               <div>
                 <span class="eyebrow">Buying guide</span>
                 <h2>Useful purchase sizes</h2>
-              </div>
+              </div>${contextualHelpLink('buying-guide')}
             </div>
             ${optimizerCards(analyzablePosition, holding)}
             ${curveSvg(analyzablePosition, holding)}
@@ -1471,7 +1508,7 @@ function render(): void {
               <div>
                 <span class="eyebrow">Compare options</span>
                 <h2>Different buy sizes</h2>
-              </div>
+              </div>${contextualHelpLink('buying-guide')}
             </div>
             ${scenarioTable(analyzablePosition, holding)}
             ${isFinitePositive(holding.transactionPrice) && holding.transactionPrice < analyzablePosition.averagePrice
@@ -1480,13 +1517,13 @@ function render(): void {
           </section>
         ` : ''}
 
-        <section class="panel">
+        <section id="future-plan" class="panel">
           <div class="section-heading">
             <div>
               <span class="eyebrow">Future transactions</span>
               <h2>Plan for ${tickerLabel}</h2>
             </div>
-            ${holding.transactions.length ? `<button id="clearPlan" class="text-button">Clear plan</button>` : ''}
+            <div class="heading-actions">${contextualHelpLink('future-plan')}${holding.transactions.length ? `<button id="clearPlan" class="text-button">Clear plan</button>` : ''}</div>
           </div>
           ${transactionPlan(results, holding)}
         </section>
@@ -1499,10 +1536,16 @@ function render(): void {
   `;
 
   wireEvents();
+  inputDrafts = {};
   notice = '';
 }
 
 function wireEvents(): void {
+  document.querySelector<HTMLButtonElement>('#openHelp')?.addEventListener('click', () => openHelp());
+  document.querySelectorAll<HTMLButtonElement>('[data-help-open]').forEach((button) => button.addEventListener('click', () => {
+    const sectionId = button.closest<HTMLElement>('[id]')?.id ?? '';
+    openHelp(button.dataset.helpOpen ?? 'home', sectionId);
+  }));
   const inputIds = [
     'ticker',
     'currency',
@@ -1888,5 +1931,28 @@ function wireEvents(): void {
     });
   });
 }
+
+window.addEventListener('hashchange', () => {
+  const route = helpRouteFromHash();
+  render();
+  if (!route && helpReturnContext) {
+    const context = helpReturnContext;
+    helpReturnContext = null;
+    window.requestAnimationFrame(() => {
+      const section = context.sectionId ? document.getElementById(context.sectionId) : null;
+      if (section) {
+        if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'start' });
+        const heading = section.querySelector<HTMLElement>('h2, h3');
+        if (heading) {
+          heading.tabIndex = -1;
+          heading.focus({ preventScroll: true });
+        }
+      } else if (typeof window.scrollTo === 'function' && !navigator.userAgent.toLowerCase().includes('jsdom')) window.scrollTo({ top: context.scrollY });
+    });
+  }
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && helpRouteFromHash()) backToCalculator();
+});
 
 render();

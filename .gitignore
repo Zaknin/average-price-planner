@@ -14,7 +14,4 @@ pnpm-debug.log*
 *.swo
 *.tmp
 *.tsbuildinfo
-.env
-.env.*
-!.env.example
 package-lock.json.*

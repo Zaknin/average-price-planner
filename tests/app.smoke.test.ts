@@ -228,6 +228,29 @@ describe('application smoke test', () => {
     expect(document.body.textContent).toContain('Shares needed');
   });
 
+  it('opens Help without changing storage and restores an unsaved transaction field on return', async () => {
+    const before = localStorage.getItem('average-down-optimizer:v2');
+    const transactionPrice = document.querySelector<HTMLInputElement>('#transactionPrice');
+    if (!transactionPrice) return;
+    transactionPrice.value = '33.25';
+    document.querySelector<HTMLButtonElement>('#openHelp')?.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(window.location.hash).toBe('#help');
+    expect(document.body.textContent).toContain('How to use Average Price Planner');
+    expect(localStorage.getItem('average-down-optimizer:v2')).toBe(before);
+    document.querySelector<HTMLButtonElement>('#helpBackTop')?.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(window.location.hash).toBe('');
+    expect(document.querySelector<HTMLInputElement>('#transactionPrice')?.value).toBe('33.25');
+
+    document.querySelector<HTMLButtonElement>('[data-help-open="market-snapshot"]')?.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(window.location.hash).toBe('#help/market-snapshot');
+    expect(document.querySelector('#helpArticleTitle')?.textContent).toBe('Current market snapshot');
+    document.querySelector<HTMLButtonElement>('#helpBack')?.click();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  });
+
   it('can delete the final remaining position and opens a blank replacement', () => {
     while ((document.querySelector<HTMLSelectElement>('#holdingSelect')?.options.length ?? 0) > 1) {
       document.querySelector<HTMLButtonElement>('#deleteHolding')?.click();

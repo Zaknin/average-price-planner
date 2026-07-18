@@ -20,4 +20,3 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run build
-      - run: docker build -t stock-average-optimizer:ci .
