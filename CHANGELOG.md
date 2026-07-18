@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.2
+
+- Improved natural Russian wording across the calculator and Help.
+- Corrected runtime Russian plural forms and executed-trade confirmations.
+- Standardized scenario and transaction status wording, financial terminology, glossary, and privacy guidance.
+- No calculation, storage, backup, or CSV changes.
+
 ## 1.9.1
 
 - Polished Russian interface terminology for calculations, scenarios, DCA, comparison, execution, and notifications.

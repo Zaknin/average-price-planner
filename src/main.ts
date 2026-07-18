@@ -40,7 +40,7 @@ import {
   summarizeScenario,
 } from './planner';
 import { helpHash, helpRouteFromHash, renderHelp } from './help';
-import { formatCurrency as formatLocalizedCurrency, formatDateTime, formatNumber as formatLocalizedNumber, formatPercent, getLocale, initializeLocale, parseLocalizedDecimal, setLocale, t, type Locale } from './i18n';
+import { formatCurrency as formatLocalizedCurrency, formatDateTime, formatNumber as formatLocalizedNumber, formatPercent, getLocale, initializeLocale, parseLocalizedDecimal, plural, setLocale, t, type Locale } from './i18n';
 
 type HoldingState = {
   id: string;
@@ -436,6 +436,31 @@ function formatQuantity(value: number, holding = activeHolding()): string {
   return formatLocalizedNumber(value, digits);
 }
 
+function countPhrase(value: number, one: string, few: string, many: string, fractional = few): string {
+  const formatted = formatLocalizedNumber(value);
+  if (getLocale() !== 'ru') return formatted;
+  return `${formatted} ${Number.isInteger(value) ? plural(value, one, few, many) : fractional}`;
+}
+
+function sharePhrase(value: number, context: 'standalone' | 'genitive' = 'standalone', holding = activeHolding()): string {
+  if (getLocale() !== 'ru') return formatQuantity(value, holding);
+  return context === 'genitive'
+    ? countPhrase(value, 'акции', 'акций', 'акций', 'акций')
+    : countPhrase(value, 'акция', 'акции', 'акций', 'акции');
+}
+
+function executedTradePhrase(value: number, grammaticalCase: 'accusative' | 'nominative' = 'nominative'): string {
+  if (getLocale() !== 'ru') return `${formatLocalizedNumber(value)} executed transaction${value === 1 ? '' : 's'}`;
+  return grammaticalCase === 'accusative'
+    ? countPhrase(value, 'исполненную сделку', 'исполненные сделки', 'исполненных сделок', 'исполненные сделки')
+    : countPhrase(value, 'исполненная сделка', 'исполненные сделки', 'исполненных сделок', 'исполненные сделки');
+}
+
+function executedTradeAgreement(value: number): string {
+  if (getLocale() !== 'ru') return 'Applied';
+  return Number.isInteger(value) ? plural(value, 'учтена', 'учтены', 'учтено') : 'учтено';
+}
+
 function percent(value: number, fractionDigits = 1): string {
   return formatPercent(value, fractionDigits);
 }
@@ -480,14 +505,14 @@ function effectivePosition(holding = activeHolding()): {
 
 function holdingName(holding: HoldingState, index: number): string {
   const ticker = holding.ticker.trim() || `${t('positionLabel')} ${index + 1}`;
-  return `${ticker} · ${formatQuantity(holding.baseShares, holding)} ${t('sharesSuffix')}`;
+  return `${ticker} · ${sharePhrase(holding.baseShares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`}`;
 }
 
 function holdingSummary(holding: HoldingState): string {
   const ticker = escapeHtml(holding.ticker || t('unnamedPosition'));
   const position = validBasePosition(holding);
   const positionText = position
-    ? `${formatQuantity(position.shares, holding)} ${t('sharesSuffix')} · ${t('averageCost')} ${formatCurrency(position.averagePrice, holding)}`
+    ? `${sharePhrase(position.shares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} · ${t('averageCost')} ${formatCurrency(position.averagePrice, holding)}`
     : t('addPositionDetails');
   return `
     <div class="holding-mobile-summary">
@@ -534,8 +559,8 @@ function transactionSummary(position: Position, holding: HoldingState): string {
       return `
         <div class="plain-summary warning-summary">
           <span>${t('checkShareAmount')}</span>
-          <strong>${t('onlySharesAvailable', { shares: formatQuantity(position.shares) })}</strong>
-          <p>${t('reduceSale', { shares: formatQuantity(position.shares) })}</p>
+          <strong>${t('onlySharesAvailable', { shares: sharePhrase(position.shares) })}</strong>
+          <p>${t('reduceSale', { shares: sharePhrase(position.shares, 'genitive') })}</p>
         </div>
       `;
     }
@@ -552,7 +577,7 @@ function transactionSummary(position: Position, holding: HoldingState): string {
     return `
       <div class="plain-summary">
         <span>${t('quickAnswer')}</span>
-        <strong>${t('sellingSummary', { shares: formatQuantity(result.shares), price: formatCurrency(result.price), fee: formatCurrency(result.feeAmount), proceeds: formatCurrency(result.netAmount) })}</strong>
+        <strong>${t('sellingSummary', { shares: sharePhrase(result.shares, 'genitive'), price: formatCurrency(result.price), fee: formatCurrency(result.feeAmount), proceeds: formatCurrency(result.netAmount) })}</strong>
         <p>${t('averageStays', { average: result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : t('closed'), outcome: gainOrLoss, value: formatCurrency(Math.abs(result.realizedProfitLoss)) })}</p>
         ${result.warning ? `<p class="negative">${escapeHtml(result.warning)}</p>` : ''}
       </div>
@@ -567,7 +592,7 @@ function transactionSummary(position: Position, holding: HoldingState): string {
     return `
       <div class="plain-summary">
         <span>${t('quickAnswer')}</span>
-        <strong>${t('buyingSummary', { shares: formatQuantity(analysis.quantity), price: formatCurrency(holding.transactionPrice), fee: formatCurrency(analysis.feeAmount), total: formatCurrency(analysis.totalCost) })}</strong>
+        <strong>${t('buyingSummary', { shares: sharePhrase(analysis.quantity, 'genitive'), price: formatCurrency(holding.transactionPrice), fee: formatCurrency(analysis.feeAmount), total: formatCurrency(analysis.totalCost) })}</strong>
         <p>${t('averageMoves', { before, after, reduction: formatCurrency(analysis.reduction), percent: percent(analysis.reductionPercent) })}</p>
       </div>
     `;
@@ -1155,7 +1180,7 @@ function exportBackup(scope: 'all' | 'active'): void {
   const backup = createBackup(positions as unknown as BackupPosition[], scope === 'all' ? store.activeHoldingId : undefined, scope, undefined, scenarios as unknown as BackupPosition[], scope === 'all' ? store.comparisonScenarioIds : store.comparisonScenarioIds.filter((id) => scenarios.some((scenario) => scenario.id === id)));
   const prefix = scope === 'active' && holding.ticker ? holding.ticker.replace(/[^A-Z0-9._-]/gi, '').slice(0, 24) : 'average-price-planner';
   downloadText(`${prefix}-backup-${dateStamp()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
-  notice = t('exportedBackup', { positions: positions.length, scenarios: scenarios.length });
+  notice = t('exportedBackup', { positions: countPhrase(positions.length, 'позиция', 'позиции', 'позиций'), scenarios: countPhrase(scenarios.length, 'сценарий', 'сценария', 'сценариев') });
   render();
 }
 
@@ -1181,7 +1206,7 @@ function exportPlanCsv(): void {
   }));
   const prefix = (holding.ticker || 'position').replace(/[^A-Z0-9._-]/gi, '').slice(0, 24);
   downloadText(`${prefix}-plan-${dateStamp()}.csv`, planCsv(rows), 'text/csv;charset=utf-8');
-  notice = t('exportedPlanCsv', { rows: rows.length });
+  notice = t('exportedPlanCsv', { rows: countPhrase(rows.length, 'операция', 'операции', 'операций') });
   render();
 }
 
@@ -1217,7 +1242,7 @@ function applyPendingImport(mode: 'merge' | 'replace'): void {
   const transactionCount = imported.reduce((total, holding) => total + holding.transactions.length, 0);
   pendingImport = null;
   saveStore();
-  notice = t('importedData', { positions: imported.length, transactions: transactionCount, scenarios: importedScenarios.length });
+  notice = t('importedData', { positions: countPhrase(imported.length, 'позиция', 'позиции', 'позиций'), transactions: countPhrase(transactionCount, 'операция плана', 'операции плана', 'операций плана'), scenarios: countPhrase(importedScenarios.length, 'сценарий', 'сценария', 'сценариев') });
   render();
 }
 
@@ -1379,7 +1404,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>${t('documentTitle')} <span class="release-tag">v1.9.1</span></h1>
+          <h1>${t('documentTitle')} <span class="release-tag">v1.9.2</span></h1>
           <p>${t('appTagline')}</p>
         </div>
       </div>
@@ -1916,7 +1941,7 @@ function wireEvents(): void {
     document.querySelector<HTMLInputElement>('#reverseTarget')?.addEventListener('change', (event) => { reverseTarget = parseLocalizedDecimal((event.currentTarget as HTMLInputElement).value) ?? 0; render(); });
     document.querySelector<HTMLButtonElement>('#previewApplyExecuted')?.addEventListener('click', () => { pendingApplicationScenarioId = scenario.id; render(); });
     document.querySelector<HTMLButtonElement>('#cancelApplyExecuted')?.addEventListener('click', () => { pendingApplicationScenarioId = null; render(); });
-    document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.addEventListener('click', () => { const holding = activeHolding(); const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario); if (!preview.valid || !preview.candidates.length) { notice = t('noEligibleExecuted'); pendingApplicationScenarioId = null; render(); return; } if (!window.confirm(t('confirmApplyExecuted', { rows: preview.candidates.length }))) return; holding.baseShares = preview.finalPosition.shares; holding.baseAverage = preview.finalPosition.averagePrice; const appliedAt = new Date().toISOString(); const ids = new Set(preview.candidates.map((transaction) => transaction.id)); scenario.transactions.forEach((transaction) => { if (ids.has(transaction.id)) transaction.appliedAt = appliedAt; }); touchScenario(scenario); pendingApplicationScenarioId = null; notice = t('appliedExecuted', { rows: preview.candidates.length }); render(); });
+    document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.addEventListener('click', () => { const holding = activeHolding(); const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario); if (!preview.valid || !preview.candidates.length) { notice = t('noEligibleExecuted'); pendingApplicationScenarioId = null; render(); return; } if (!window.confirm(t('confirmApplyExecuted', { rows: executedTradePhrase(preview.candidates.length, 'accusative') }))) return; holding.baseShares = preview.finalPosition.shares; holding.baseAverage = preview.finalPosition.averagePrice; const appliedAt = new Date().toISOString(); const ids = new Set(preview.candidates.map((transaction) => transaction.id)); scenario.transactions.forEach((transaction) => { if (ids.has(transaction.id)) transaction.appliedAt = appliedAt; }); touchScenario(scenario); pendingApplicationScenarioId = null; notice = t('appliedExecuted', { rows: executedTradePhrase(preview.candidates.length), agreement: executedTradeAgreement(preview.candidates.length) }); render(); });
   }
 
   document.querySelector<HTMLButtonElement>('#resetHolding')?.addEventListener('click', () => {

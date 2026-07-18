@@ -70,7 +70,7 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
     expect(document.documentElement.lang).toBe('ru');
     expect(document.body.textContent).toContain('Планировщик средней цены');
-    expect(document.body.textContent).toContain('Проверка операции');
+    expect(document.body.textContent).toContain('Расчёт операции');
     expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}')).toEqual(before);
     expect(localStorage.getItem('average-price-planner:locale')).toBe('ru');
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();

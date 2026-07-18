@@ -55,6 +55,8 @@ Keep the Russian Help catalog in substantive parity with English: every stable s
 
 Russian interface strings with counts must use `plural()` in `i18n.ts` so singular, paucal, and plural forms are selected correctly; tests must cover 1, 2, 5, and 21. Keep `Intl` formatting and localized decimal parsing at display/input boundaries only.
 
+Test complete rendered Russian sentences, not only a noun helper. Fractional share quantities use the neutral form `акции` (for example, `0,25 акции` and `1,5 акции`). Use the user-facing status set `Черновик`, `Активный`, `Завершённый`, `В архиве` for scenarios and `Запланировано`, `Исполнено`, `Отменено`, `Учтено в позиции` for transactions. Keep `Средняя цена`, `Себестоимость позиции`, `Сумма продажи до комиссии`, and `Сумма после комиссии` distinct, and keep developer jargon out of user-facing text.
+
 Use `Intl.NumberFormat`, `Intl.DateTimeFormat`, and `Intl.PluralRules` through `i18n.ts` for display values. `parseLocalizedDecimal()` accepts either a Russian decimal comma or a decimal point in supported numeric inputs and rejects ambiguous grouping/separator formats. Convert the result to a number before calculations; do not localize values retained in state.
 
 The portfolio store remains schema v4 and the backup document remains schema v2. Locale preference uses `average-price-planner:locale`, separately from `average-down-optimizer:v2`, and is excluded from JSON backups. JSON and CSV preserve their canonical numeric, enum, date, and UTF-8/BOM formats regardless of UI locale.
