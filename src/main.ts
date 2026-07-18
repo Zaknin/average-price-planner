@@ -445,7 +445,7 @@ function countPhrase(value: number, one: string, few: string, many: string, frac
 function sharePhrase(value: number, context: 'standalone' | 'genitive' = 'standalone', holding = activeHolding()): string {
   if (getLocale() !== 'ru') return formatQuantity(value, holding);
   return context === 'genitive'
-    ? countPhrase(value, 'акции', 'акций', 'акций', 'акций')
+    ? countPhrase(value, 'акции', 'акций', 'акций', 'акции')
     : countPhrase(value, 'акция', 'акции', 'акций', 'акции');
 }
 
@@ -943,7 +943,7 @@ function targetsPanel(position: Position, holding: HoldingState): string {
       <div><span>${t('feeNetProceeds')}</span><strong>${formatCurrency(sellResult.feeAmount, holding)} / ${formatCurrency(sellResult.netAmount, holding)}</strong></div>
       <div><span>${t('profitReturn')}</span><strong class="${sellResult.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(sellResult.realizedProfitLoss, holding)} / ${percent(sellResult.returnPercent)}</strong></div>
     </div>
-    <p class="simple-note">${t('remainingPosition', { shares: formatQuantity(sellResult.remainingPosition.shares, holding), average: sellResult.remainingPosition.shares ? t('averageAt', { average: formatCurrency(sellResult.remainingPosition.averagePrice, holding) }) : t('closedSuffix') })}</p>`
+    <p class="simple-note">${t('remainingPosition', { shares: sharePhrase(sellResult.remainingPosition.shares, 'standalone', holding), average: sellResult.remainingPosition.shares ? t('averageAt', { average: formatCurrency(sellResult.remainingPosition.averagePrice, holding) }) : t('closedSuffix') })}</p>`
     : `<div class="plain-summary warning-summary"><span>${t('saleTarget')}</span><strong>${t('enterValidSaleDetails')}</strong></div>`;
   return `
     <section id="target-tools" class="panel targets-panel">
@@ -968,7 +968,7 @@ function targetsPanel(position: Position, holding: HoldingState): string {
 }
 
 function dataManagementPanel(holding: HoldingState): string {
-  const preview = pendingImport ? (() => { const scenarioTransactions = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.length : 0), 0); const executed = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && (transaction as { status?: unknown }).status === 'executed').length : 0), 0); const applied = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && Boolean((transaction as { appliedAt?: unknown }).appliedAt)).length : 0), 0); return `<div class="import-preview"><strong>${t('backupPreview')}</strong><span>${formatLocalizedNumber(pendingImport.positions.length)} ${t('positions')} · ${formatLocalizedNumber(pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0))} ${t('planTransactions')} · ${formatLocalizedNumber(pendingImport.scenarios.length)} ${t('savedScenarios')}</span><span>${formatLocalizedNumber(scenarioTransactions)} ${t('scenarioTransactionsCount')} · ${formatLocalizedNumber(executed)} ${t('executed')} · ${formatLocalizedNumber(applied)} ${t('applied')}</span><span>${t('exportedAt', { date: formatDateTime(pendingImport.exportedAt) })} · ${t('backupSchema', { version: String(pendingImport.backupSchemaVersion) })}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">${t('mergeCurrentData')}</button><button id="applyReplaceImport" class="text-button danger-text">${t('replaceCurrentData')}</button></div></div>`; })() : '';
+  const preview = pendingImport ? (() => { const scenarioTransactions = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.length : 0), 0); const executed = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && (transaction as { status?: unknown }).status === 'executed').length : 0), 0); const applied = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && Boolean((transaction as { appliedAt?: unknown }).appliedAt)).length : 0), 0); const planTransactions = pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0); const phrase = (count: number, one: string, few: string, many: string, fallback: string): string => getLocale() === 'ru' ? countPhrase(count, one, few, many) : `${formatLocalizedNumber(count)} ${fallback}`; return `<div class="import-preview"><strong>${t('backupPreview')}</strong><span>${phrase(pendingImport.positions.length, 'сохранённая позиция', 'сохранённые позиции', 'сохранённых позиций', t('positions'))} · ${phrase(planTransactions, 'операция плана', 'операции плана', 'операций плана', t('planTransactions'))} · ${phrase(pendingImport.scenarios.length, 'сценарий', 'сценария', 'сценариев', t('savedScenarios'))}</span><span>${phrase(scenarioTransactions, 'сделка сценария', 'сделки сценария', 'сделок сценария', t('scenarioTransactionsCount'))} · ${phrase(executed, 'исполненная сделка', 'исполненные сделки', 'исполненных сделок', t('executed'))} · ${phrase(applied, 'сделка, учтённая в позиции', 'сделки, учтённые в позиции', 'сделок, учтённых в позиции', t('applied'))}</span><span>${t('exportedAt', { date: formatDateTime(pendingImport.exportedAt) })} · ${t('backupSchema', { version: String(pendingImport.backupSchemaVersion) })}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">${t('mergeCurrentData')}</button><button id="applyReplaceImport" class="text-button danger-text">${t('replaceCurrentData')}</button></div></div>`; })() : '';
   return `
     <section id="data-management" class="panel data-panel">
       <div class="section-heading"><div><span class="eyebrow">${t('dataManagement')}</span><h2>${t('backupRestoreExport')}</h2></div>${contextualHelpLink('backup-export')}</div>
@@ -1404,7 +1404,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>${t('documentTitle')} <span class="release-tag">v1.9.3</span></h1>
+          <h1>${t('documentTitle')} <span class="release-tag">v1.9.4</span></h1>
           <p>${t('appTagline')}</p>
         </div>
       </div>

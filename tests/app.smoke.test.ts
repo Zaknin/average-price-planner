@@ -76,6 +76,29 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
   });
 
+  it('renders complete Russian singular, plural, and fractional Buy summaries', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    const setField = (id: string, value: string): void => {
+      const input = document.querySelector<HTMLInputElement>(`#${id}`);
+      if (!input) throw new Error(`Missing ${id}`);
+      input.value = value;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setField('transactionPrice', '40');
+    setField('transactionShares', '1');
+    expect(document.body.textContent).toContain('Общая сумма покупки 1 акции по цене');
+    setField('transactionShares', '2');
+    expect(document.body.textContent).toContain('Общая сумма покупки 2 акций по цене');
+    setField('transactionShares', '5');
+    expect(document.body.textContent).toContain('Общая сумма покупки 5 акций по цене');
+    setField('transactionShares', '21');
+    expect(document.body.textContent).toContain('Общая сумма покупки 21 акции по цене');
+    setField('shareStep', '0.01');
+    setField('transactionShares', '1.5');
+    expect(document.body.textContent).toContain('Общая сумма покупки 1,5 акции по цене');
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+  });
+
   it('renders localized Scenario Planner and DCA controls in Russian', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
     document.querySelector<HTMLButtonElement>('#newScenario')?.click();

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.4
+
+- Completed substantive Russian Help parity, including workflows, warnings, export choices, and glossary definitions.
+- Corrected Russian count phrases and complete Buy/Sell summaries in the rendered calculator.
+- Aligned Russian README and UI terminology without changing calculations, storage, backups, JSON, or CSV.
+
 ## 1.9.3
 
 - Completed Russian runtime pluralization coverage and import-preview wording.
