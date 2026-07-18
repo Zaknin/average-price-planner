@@ -65,6 +65,39 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('[data-action="buy"]')?.click();
   });
 
+  it('switches the calculator language without putting locale in the portfolio store', () => {
+    const before = JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}');
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    expect(document.documentElement.lang).toBe('ru');
+    expect(document.body.textContent).toContain('Планировщик средней цены');
+    expect(document.body.textContent).toContain('Проверка операции');
+    expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}')).toEqual(before);
+    expect(localStorage.getItem('average-price-planner:locale')).toBe('ru');
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+  });
+
+  it('renders localized Scenario Planner and DCA controls in Russian', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    document.querySelector<HTMLButtonElement>('#newScenario')?.click();
+    document.querySelector<HTMLButtonElement>('#toggleScenarioPlanner')?.click();
+    expect(document.body.textContent).toContain('Название сценария');
+    expect(document.body.textContent).toContain('Лестница DCA');
+    expect(document.body.textContent).toContain('Равными суммами');
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    document.querySelector<HTMLButtonElement>('[data-delete-scenario]')?.click();
+    confirm.mockRestore();
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+  });
+
+  it('keeps buying-guide result cards localized in Russian', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    expect(document.body.textContent).toContain('Ориентир убывающей отдачи');
+    expect(document.body.textContent).toContain('Меньшая покупка с близким эффектом');
+    expect(document.body.textContent).not.toContain('Diminishing-return reference');
+    expect(document.body.textContent).not.toContain('Smaller buy with similar benefit');
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+  });
+
   it('recalculates when the transaction price changes', () => {
     const priceInput = document.querySelector<HTMLInputElement>('#transactionPrice');
     expect(priceInput).not.toBeNull();

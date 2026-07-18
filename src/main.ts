@@ -28,7 +28,7 @@ import {
   type BackupDocument,
   type BackupPosition,
 } from './data';
-import type { DcaLadder, Scenario, ScenarioStatus, ScenarioTransaction, StressPrice } from './domain';
+import type { DcaLadder, PlannerMessageCode, Scenario, ScenarioStatus, ScenarioTransaction, StressPrice } from './domain';
 import {
   activeLadderFee,
   generateDcaLadder,
@@ -40,6 +40,7 @@ import {
   summarizeScenario,
 } from './planner';
 import { helpHash, helpRouteFromHash, renderHelp } from './help';
+import { formatCurrency as formatLocalizedCurrency, formatDateTime, formatNumber as formatLocalizedNumber, formatPercent, getLocale, initializeLocale, parseLocalizedDecimal, setLocale, t, type Locale } from './i18n';
 
 type HoldingState = {
   id: string;
@@ -94,6 +95,8 @@ const LEGACY_STORAGE_KEY = 'average-down-optimizer:v1';
 const appElement = document.querySelector<HTMLDivElement>('#app');
 if (!appElement) throw new Error('Application root was not found.');
 const app: HTMLDivElement = appElement;
+
+initializeLocale();
 
 let notice = '';
 let store = loadStore();
@@ -158,7 +161,8 @@ function createHolding(overrides: Partial<HoldingState> = {}): HoldingState {
 }
 
 function nonNegative(value: unknown, fallback = 0): number {
-  return Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : fallback;
+  const numeric = typeof value === 'string' ? parseLocalizedDecimal(value) : Number(value);
+  return numeric !== null && Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
 }
 
 function normalizeScenarioTransaction(value: Partial<ScenarioTransaction>, index = 0): ScenarioTransaction | null {
@@ -346,7 +350,7 @@ function saveStore(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   } catch {
-    notice = 'Browser storage is unavailable, so changes may not persist after this tab closes.';
+    notice = t('storageUnavailable');
   }
 }
 
@@ -361,7 +365,7 @@ function activeHolding(): HoldingState {
 
 function numberFromInput(id: string): number {
   const input = document.querySelector<HTMLInputElement>(`#${id}`);
-  return input ? Number(input.value) : 0;
+  return input ? parseLocalizedDecimal(input.value) ?? 0 : 0;
 }
 
 function textFromInput(id: string): string {
@@ -408,7 +412,7 @@ function backToCalculator(): void {
 }
 
 function contextualHelpLink(topic: string): string {
-  return `<button type="button" class="context-help" data-help-open="${topic}" aria-label="Learn how ${topic.replaceAll('-', ' ')} works">Learn how this works</button>`;
+  return `<button type="button" class="context-help" data-help-open="${topic}" aria-label="${t('learnHowThisWorks')}">${t('learnHowThisWorks')}</button>`;
 }
 
 function activeFee(holding = activeHolding()): FeeSettings {
@@ -420,16 +424,7 @@ function feeLabel(fee: FeeSettings, holding = activeHolding()): string {
 }
 
 function formatCurrency(value: number, holding = activeHolding()): string {
-  if (!Number.isFinite(value)) return '—';
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency',
-      currency: holding.currency || 'USD',
-      maximumFractionDigits: 4,
-    }).format(value);
-  } catch {
-    return `${holding.currency || '$'} ${value.toFixed(4)}`;
-  }
+  return formatLocalizedCurrency(value, holding.currency || 'USD');
 }
 
 function formatQuantity(value: number, holding = activeHolding()): string {
@@ -438,12 +433,24 @@ function formatQuantity(value: number, holding = activeHolding()): string {
   const digits = step < 1
     ? Math.min(6, Math.max(3, String(step).split('.')[1]?.length ?? 3))
     : 2;
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: digits }).format(value);
+  return formatLocalizedNumber(value, digits);
 }
 
 function percent(value: number, fractionDigits = 1): string {
-  if (!Number.isFinite(value)) return '—';
-  return `${value.toFixed(fractionDigits)}%`;
+  return formatPercent(value, fractionDigits);
+}
+
+function plannerMessage(code: PlannerMessageCode | null | undefined): string {
+  const key = {
+    invalidPosition: 'plannerInvalidPosition', invalidSellFee: 'plannerInvalidSellFee', invalidTarget: 'plannerInvalidTarget', invalidSaleQuantity: 'plannerInvalidSaleQuantity', invalidSalePrice: 'plannerInvalidSalePrice', unattainableTarget: 'plannerUnattainableTarget', requiredQuantityExceedsPosition: 'plannerRequiredQuantityExceedsPosition', executionApplyFailed: 'plannerExecutionApplyFailed', invalidLadderLevels: 'plannerInvalidLadderLevels', invalidLadderFee: 'plannerInvalidLadderFee', invalidLadderInvestment: 'plannerInvalidLadderInvestment', invalidLadderShares: 'plannerInvalidLadderShares', ladderFeeUncovered: 'plannerLadderFeeUncovered',
+  } as const;
+  return code ? t(key[code]) : t('invalidReverseSell');
+}
+
+function changeLocale(locale: Locale): void {
+  captureInputDrafts();
+  setLocale(locale);
+  render();
 }
 
 function escapeHtml(value: string): string {
@@ -472,23 +479,23 @@ function effectivePosition(holding = activeHolding()): {
 }
 
 function holdingName(holding: HoldingState, index: number): string {
-  const ticker = holding.ticker.trim() || `Position ${index + 1}`;
-  return `${ticker} · ${formatQuantity(holding.baseShares, holding)} shares`;
+  const ticker = holding.ticker.trim() || `${t('positionLabel')} ${index + 1}`;
+  return `${ticker} · ${formatQuantity(holding.baseShares, holding)} ${t('sharesSuffix')}`;
 }
 
 function holdingSummary(holding: HoldingState): string {
-  const ticker = escapeHtml(holding.ticker || 'Unnamed position');
+  const ticker = escapeHtml(holding.ticker || t('unnamedPosition'));
   const position = validBasePosition(holding);
   const positionText = position
-    ? `${formatQuantity(position.shares, holding)} shares · Average ${formatCurrency(position.averagePrice, holding)}`
-    : 'Add your shares and average price';
+    ? `${formatQuantity(position.shares, holding)} ${t('sharesSuffix')} · ${t('averageCost')} ${formatCurrency(position.averagePrice, holding)}`
+    : t('addPositionDetails');
   return `
     <div class="holding-mobile-summary">
       <div class="holding-summary-copy">
-        <span class="eyebrow">Active holding</span>
+        <span class="eyebrow">${t('activeHolding')}</span>
         <strong title="${ticker}">${ticker}</strong>
         <span>${positionText}</span>
-        <span>Budget ${formatCurrency(holding.budget, holding)}</span>
+        <span>${t('budget')} ${formatCurrency(holding.budget, holding)}</span>
       </div>
       <button
         id="toggleHoldingEditor"
@@ -496,7 +503,7 @@ function holdingSummary(holding: HoldingState): string {
         type="button"
         aria-expanded="${holdingEditorExpanded}"
         aria-controls="holdingEditor"
-      >${holdingEditorExpanded ? 'Done editing' : 'Edit holding'}</button>
+      >${holdingEditorExpanded ? t('doneEditing') : t('editHolding')}</button>
     </div>
   `;
 }
@@ -514,21 +521,21 @@ function metricCard(title: string, value: string, detail: string, footer = '', t
 
 function transactionSummary(position: Position, holding: HoldingState): string {
   if (!isFinitePositive(holding.transactionPrice) || !isFinitePositive(holding.transactionShares)) {
-    return `<div class="empty-state compact-empty">Enter a price and number of shares to see the result.</div>`;
+    return `<div class="empty-state compact-empty">${t('enterPriceAndSharesResult')}</div>`;
   }
 
   const fee = activeFee(holding);
   if (fee.value < 0 || !Number.isFinite(fee.value)) {
-    return `<div class="plain-summary warning-summary"><span>Fee input</span><strong>Enter a fee of zero or greater.</strong></div>`;
+    return `<div class="plain-summary warning-summary"><span>${t('feeInput')}</span><strong>${t('enterNonNegativeFee')}</strong></div>`;
   }
 
   if (holding.action === 'sell') {
     if (holding.transactionShares > position.shares) {
       return `
         <div class="plain-summary warning-summary">
-          <span>Check the share amount</span>
-          <strong>You only have ${formatQuantity(position.shares)} shares available in this planned position.</strong>
-          <p>Reduce the sale to ${formatQuantity(position.shares)} shares or less.</p>
+          <span>${t('checkShareAmount')}</span>
+          <strong>${t('onlySharesAvailable', { shares: formatQuantity(position.shares) })}</strong>
+          <p>${t('reduceSale', { shares: formatQuantity(position.shares) })}</p>
         </div>
       `;
     }
@@ -541,12 +548,12 @@ function transactionSummary(position: Position, holding: HoldingState): string {
       feeMode: fee.mode,
       feeValue: fee.value,
     });
-    const gainOrLoss = result.realizedProfitLoss >= 0 ? 'estimated gain' : 'estimated loss';
+    const gainOrLoss = result.realizedProfitLoss >= 0 ? t('estimatedGain') : t('estimatedLoss');
     return `
       <div class="plain-summary">
-        <span>Quick answer</span>
-        <strong>Selling ${formatQuantity(result.shares)} shares at ${formatCurrency(result.price)} with a ${formatCurrency(result.feeAmount)} fee produces ${formatCurrency(result.netAmount)} net proceeds.</strong>
-        <p>Your average cost stays ${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'closed'}, with an ${gainOrLoss} of ${formatCurrency(Math.abs(result.realizedProfitLoss))}.</p>
+        <span>${t('quickAnswer')}</span>
+        <strong>${t('sellingSummary', { shares: formatQuantity(result.shares), price: formatCurrency(result.price), fee: formatCurrency(result.feeAmount), proceeds: formatCurrency(result.netAmount) })}</strong>
+        <p>${t('averageStays', { average: result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : t('closed'), outcome: gainOrLoss, value: formatCurrency(Math.abs(result.realizedProfitLoss)) })}</p>
         ${result.warning ? `<p class="negative">${escapeHtml(result.warning)}</p>` : ''}
       </div>
     `;
@@ -559,9 +566,9 @@ function transactionSummary(position: Position, holding: HoldingState): string {
   if (analysis.newAverage < position.averagePrice) {
     return `
       <div class="plain-summary">
-        <span>Quick answer</span>
-        <strong>Buying ${formatQuantity(analysis.quantity)} shares at ${formatCurrency(holding.transactionPrice)} with a ${formatCurrency(analysis.feeAmount)} fee costs ${formatCurrency(analysis.totalCost)} in total.</strong>
-        <p>Your average moves from ${before} to ${after}, a decrease of ${formatCurrency(analysis.reduction)} (${percent(analysis.reductionPercent)}).</p>
+        <span>${t('quickAnswer')}</span>
+        <strong>${t('buyingSummary', { shares: formatQuantity(analysis.quantity), price: formatCurrency(holding.transactionPrice), fee: formatCurrency(analysis.feeAmount), total: formatCurrency(analysis.totalCost) })}</strong>
+        <p>${t('averageMoves', { before, after, reduction: formatCurrency(analysis.reduction), percent: percent(analysis.reductionPercent) })}</p>
       </div>
     `;
   }
@@ -569,18 +576,18 @@ function transactionSummary(position: Position, holding: HoldingState): string {
   if (analysis.newAverage > position.averagePrice) {
     return `
       <div class="plain-summary warning-summary">
-        <span>Quick answer</span>
-        <strong>This purchase raises your average from ${before} to ${after}.</strong>
-        <p>The proposed buy price is above your current average. The total cash required is ${formatCurrency(analysis.totalCost)}.</p>
+        <span>${t('quickAnswer')}</span>
+        <strong>${t('purchaseRaisesAverage', { before, after })}</strong>
+        <p>${t('buyAboveAverage', { total: formatCurrency(analysis.totalCost) })}</p>
       </div>
     `;
   }
 
   return `
     <div class="plain-summary">
-      <span>Quick answer</span>
-      <strong>This purchase leaves your average unchanged at ${before}.</strong>
-      <p>The total cash required is ${formatCurrency(analysis.totalCost)}.</p>
+      <span>${t('quickAnswer')}</span>
+      <strong>${t('purchaseUnchanged', { average: before })}</strong>
+      <p>${t('totalCashRequired', { total: formatCurrency(analysis.totalCost) })}</p>
     </div>
   `;
 }
@@ -603,26 +610,26 @@ function resultStrip(position: Position, holding: HoldingState): string {
     const pnlClass = result.realizedProfitLoss >= 0 ? 'positive' : 'negative';
     return `
       <div class="result-strip six">
-        <div><span>Gross sale</span><strong>${formatCurrency(result.grossAmount)}</strong></div>
-        <div><span>Fee</span><strong>${formatCurrency(result.feeAmount)}</strong></div>
-        <div><span>Net proceeds</span><strong>${formatCurrency(result.netAmount)}</strong></div>
-        <div><span>Shares left</span><strong>${formatQuantity(result.sharesAfter)}</strong></div>
-        <div><span>Average cost</span><strong>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'Position closed'}</strong></div>
-        <div><span>Estimated realized P/L</span><strong class="${pnlClass}">${formatCurrency(result.realizedProfitLoss)}</strong></div>
+        <div><span>${t('grossSale')}</span><strong>${formatCurrency(result.grossAmount)}</strong></div>
+        <div><span>${t('fee')}</span><strong>${formatCurrency(result.feeAmount)}</strong></div>
+        <div><span>${t('netProceeds')}</span><strong>${formatCurrency(result.netAmount)}</strong></div>
+        <div><span>${t('sharesLeft')}</span><strong>${formatQuantity(result.sharesAfter)}</strong></div>
+        <div><span>${t('averageCost')}</span><strong>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : t('positionClosed')}</strong></div>
+        <div><span>${t('estimatedRealizedProfitLoss')}</span><strong class="${pnlClass}">${formatCurrency(result.realizedProfitLoss)}</strong></div>
       </div>
-      <p class="simple-note">Selling shares does not change the average cost of the shares you keep. It only reduces the share count and realizes a gain or loss. ${contextualHelpLink('reading-results')}</p>
+      <p class="simple-note">${t('sellingDoesNotChangeAverage')} ${contextualHelpLink('reading-results')}</p>
     `;
   }
 
   const analysis = analyzePurchase(position, holding.transactionShares, holding.transactionPrice, fee);
   return `
     <div class="result-strip six">
-      <div><span>Gross purchase</span><strong>${formatCurrency(analysis.grossAmount)}</strong></div>
-      <div><span>Fee</span><strong>${formatCurrency(analysis.feeAmount)}</strong></div>
-      <div><span>Total cash</span><strong>${formatCurrency(analysis.totalCost)}</strong></div>
-      <div><span>New share count</span><strong>${formatQuantity(position.shares + analysis.quantity)}</strong></div>
-      <div><span>New average</span><strong>${formatCurrency(analysis.newAverage)}</strong></div>
-      <div><span>Average change</span><strong class="${analysis.reduction > 0 ? 'positive' : analysis.newAverage > position.averagePrice ? 'negative' : ''}">${analysis.reduction > 0 ? `−${formatCurrency(analysis.reduction)}` : formatCurrency(analysis.newAverage - position.averagePrice)}</strong></div>
+      <div><span>${t('grossPurchase')}</span><strong>${formatCurrency(analysis.grossAmount)}</strong></div>
+      <div><span>${t('fee')}</span><strong>${formatCurrency(analysis.feeAmount)}</strong></div>
+      <div><span>${t('totalCash')}</span><strong>${formatCurrency(analysis.totalCost)}</strong></div>
+      <div><span>${t('newShareCount')}</span><strong>${formatQuantity(position.shares + analysis.quantity)}</strong></div>
+      <div><span>${t('newAverage')}</span><strong>${formatCurrency(analysis.newAverage)}</strong></div>
+      <div><span>${t('averageChange')}</span><strong class="${analysis.reduction > 0 ? 'positive' : analysis.newAverage > position.averagePrice ? 'negative' : ''}">${analysis.reduction > 0 ? `−${formatCurrency(analysis.reduction)}` : formatCurrency(analysis.newAverage - position.averagePrice)}</strong></div>
     </div>
     <p class="simple-note result-help">${contextualHelpLink('reading-results')}</p>
   `;
@@ -633,11 +640,11 @@ function optimizerCards(position: Position, holding: HoldingState): string {
   const fee = holding.buyFee;
   const step = isFinitePositive(holding.shareStep) ? holding.shareStep : 1;
   if (!isFinitePositive(price)) {
-    return `<div class="empty-state">Enter a buy price to see average-reduction reference points.</div>`;
+    return `<div class="empty-state">${t('enterBuyPrice')}</div>`;
   }
 
   if (price >= position.averagePrice) {
-    return `<div class="warning"><strong>No average-down effect.</strong> The buy price must be below your current average of ${formatCurrency(position.averagePrice)}.</div>`;
+    return `<div class="warning"><strong>${t('noAverageDownEffect')}</strong> ${t('buyBelowAverage', { average: formatCurrency(position.averagePrice) })}</div>`;
   }
 
   const floor = Math.min(0.99, Math.max(0.01, holding.efficiencyFloor));
@@ -655,28 +662,28 @@ function optimizerCards(position: Position, holding: HoldingState): string {
   return `
     <div class="optimizer-grid">
       ${metricCard(
-        'Diminishing-return reference',
-        `${formatQuantity(floorPoint.quantity)} shares`,
-        `After this purchase, each extra share is only ${percent(floorPoint.marginalEfficiencyRemaining * 100)} as effective as the first one.`,
-        `Gross ${formatCurrency(floorPoint.grossAmount)} · Fee ${formatCurrency(floorPoint.feeAmount)} · Total ${formatCurrency(floorPoint.totalCost)} · New average ${formatCurrency(floorPoint.newAverage)}`,
+        t('diminishingReference'),
+        `${formatQuantity(floorPoint.quantity)} ${t('sharesSuffix')}`,
+        t('eachExtraShareEffect', { percent: percent(floorPoint.marginalEfficiencyRemaining * 100) }),
+        t('optimizerFinancialSummary', { gross: formatCurrency(floorPoint.grossAmount), fee: formatCurrency(floorPoint.feeAmount), total: formatCurrency(floorPoint.totalCost), average: formatCurrency(floorPoint.newAverage) }),
       )}
       ${metricCard(
-        'Halfway toward the buy price',
-        `${formatQuantity(halfPoint.quantity)} shares`,
-        `This moves your average halfway from ${formatCurrency(position.averagePrice)} toward the ${formatCurrency(price)} buy price.`,
-        `Gross ${formatCurrency(halfPoint.grossAmount)} · Fee ${formatCurrency(halfPoint.feeAmount)} · Total ${formatCurrency(halfPoint.totalCost)} · New average ${formatCurrency(halfPoint.newAverage)}`,
+        t('halfwayToBuyPrice'),
+        `${formatQuantity(halfPoint.quantity)} ${t('sharesSuffix')}`,
+        t('halfwayMove', { average: formatCurrency(position.averagePrice), price: formatCurrency(price) }),
+        t('optimizerFinancialSummary', { gross: formatCurrency(halfPoint.grossAmount), fee: formatCurrency(halfPoint.feeAmount), total: formatCurrency(halfPoint.totalCost), average: formatCurrency(halfPoint.newAverage) }),
       )}
       ${budgetPoint && fullBudgetPoint
         ? metricCard(
-        'Smaller buy with similar benefit',
-            `${formatQuantity(budgetPoint.quantity)} shares`,
-            `This captures ${percent(holding.budgetBenefitTarget * 100, 0)} of the lowering you would get by spending your full budget.`,
-            `Gross ${formatCurrency(budgetPoint.grossAmount)} · Fee ${formatCurrency(budgetPoint.feeAmount)} · Total ${formatCurrency(budgetPoint.totalCost)} · Keep ${formatCurrency(fullBudgetPoint.totalCost - budgetPoint.totalCost)} unspent`,
+        t('smallerBuySimilarBenefit'),
+            `${formatQuantity(budgetPoint.quantity)} ${t('sharesSuffix')}`,
+            t('capturesBudgetBenefit', { percent: percent(holding.budgetBenefitTarget * 100, 0) }),
+            t('keepUnspent', { gross: formatCurrency(budgetPoint.grossAmount), fee: formatCurrency(budgetPoint.feeAmount), total: formatCurrency(budgetPoint.totalCost), unspent: formatCurrency(fullBudgetPoint.totalCost - budgetPoint.totalCost) }),
           )
         : metricCard(
-            'Full-budget comparison',
-            'Set a budget',
-            fee.mode === 'fixed' && fee.value >= holding.budget ? 'The fixed buy fee uses the full budget, so no purchase is affordable.' : 'Enter a budget to compare a smaller efficient purchase with spending the full amount.',
+            t('fullBudgetComparison'),
+            t('setBudget'),
+            fee.mode === 'fixed' && fee.value >= holding.budget ? t('fixedFeeUsesBudget') : t('enterBudgetComparison'),
           )}
     </div>
   `;
@@ -711,17 +718,17 @@ function scenarioTable(position: Position, holding: HoldingState): string {
   const scenarioCards = values.map((item) => `
     <article class="scenario-card">
       <div class="scenario-card-heading">
-        <strong>${formatQuantity(item.quantity)} shares</strong>
-        <span>Total ${formatCurrency(item.totalCost)}</span>
+        <strong>${formatQuantity(item.quantity)} ${t('sharesSuffix')}</strong>
+        <span>${t('total')} ${formatCurrency(item.totalCost)}</span>
       </div>
       <dl>
-        <div><dt>Gross</dt><dd>${formatCurrency(item.grossAmount)}</dd></div>
-        <div><dt>Fee</dt><dd>${formatCurrency(item.feeAmount)} (${feeLabel(fee, holding)})</dd></div>
-        <div><dt>Total required</dt><dd>${formatCurrency(item.totalCost)}</dd></div>
-        <div><dt>New average</dt><dd>${formatCurrency(item.newAverage)}</dd></div>
-        <div><dt>Average lowered</dt><dd class="positive">${formatCurrency(item.reduction)} (${percent(item.reductionPercent)})</dd></div>
-        <div><dt>Reduction reached</dt><dd>${percent(item.theoreticalReductionCaptured * 100)}</dd></div>
-        <div><dt>Effect of one more share</dt><dd>${percent(item.marginalEfficiencyRemaining * 100)}</dd></div>
+        <div><dt>${t('gross')}</dt><dd>${formatCurrency(item.grossAmount)}</dd></div>
+        <div><dt>${t('fee')}</dt><dd>${formatCurrency(item.feeAmount)} (${feeLabel(fee, holding)})</dd></div>
+        <div><dt>${t('totalRequired')}</dt><dd>${formatCurrency(item.totalCost)}</dd></div>
+        <div><dt>${t('newAverage')}</dt><dd>${formatCurrency(item.newAverage)}</dd></div>
+        <div><dt>${t('averageLowered')}</dt><dd class="positive">${formatCurrency(item.reduction)} (${percent(item.reductionPercent)})</dd></div>
+        <div><dt>${t('achievedReduction')}</dt><dd>${percent(item.theoreticalReductionCaptured * 100)}</dd></div>
+        <div><dt>${t('effectOneMoreShare')}</dt><dd>${percent(item.marginalEfficiencyRemaining * 100)}</dd></div>
       </dl>
     </article>
   `).join('');
@@ -731,14 +738,14 @@ function scenarioTable(position: Position, holding: HoldingState): string {
       <table>
         <thead>
           <tr>
-            <th>Shares</th>
-            <th>Gross</th>
-            <th>Fee</th>
-            <th>Total</th>
-            <th>New average</th>
-            <th>Average falls by</th>
-            <th>Available average reduction reached</th>
-            <th>Effect of one more share</th>
+            <th>${t('shares')}</th>
+            <th>${t('gross')}</th>
+            <th>${t('fee')}</th>
+            <th>${t('total')}</th>
+            <th>${t('newAverage')}</th>
+            <th>${t('averageFallsBy')}</th>
+            <th>${t('availableReductionReached')}</th>
+            <th>${t('effectOneMoreShare')}</th>
           </tr>
         </thead>
         <tbody>
@@ -757,7 +764,7 @@ function scenarioTable(position: Position, holding: HoldingState): string {
         </tbody>
       </table>
     </div>
-    <div class="scenario-cards" aria-label="Purchase scenario comparison">${scenarioCards}</div>
+    <div class="scenario-cards" aria-label="${t('purchaseScenarioComparison')}">${scenarioCards}</div>
   `;
 }
 
@@ -801,30 +808,30 @@ function curveSvg(position: Position, holding: HoldingState): string {
     <div class="curve-panel">
       <div class="section-heading compact curve-heading">
         <div>
-          <span class="eyebrow">Diminishing returns</span>
-          <h3>Why larger buys help less</h3>
+          <span class="eyebrow">${t('diminishingReturns')}</span>
+          <h3>${t('largerBuysHelpLess')}</h3>
         </div>
-        <span class="muted">The first shares have the strongest effect. The curve flattens as the purchase grows.</span>
+        <span class="muted">${t('curveExplanation')}</span>
         <button
           id="toggleCurve"
           type="button"
           class="text-button curve-toggle"
           aria-expanded="${curveExpanded}"
           aria-controls="improvementCurve"
-        >${curveExpanded ? 'Hide improvement curve' : 'Show improvement curve'}</button>
+        >${curveExpanded ? t('hideImprovementCurve') : t('showImprovementCurve')}</button>
       </div>
       <div id="improvementCurve" class="curve-content ${curveExpanded ? 'is-expanded' : ''}">
-      <svg class="curve" viewBox="0 0 ${width} ${height}" role="img" aria-label="Average-down benefit curve">
+      <svg class="curve" viewBox="0 0 ${width} ${height}" role="img" aria-label="${t('averageDownBenefitCurve')}">
         <line x1="${padX}" y1="${padY}" x2="${padX}" y2="${padY + plotH}" class="axis" />
         <line x1="${padX}" y1="${padY + plotH}" x2="${padX + plotW}" y2="${padY + plotH}" class="axis" />
         <line x1="${padX}" y1="${padY + plotH / 2}" x2="${padX + plotW}" y2="${padY + plotH / 2}" class="grid" />
         <polyline points="${points.join(' ')}" class="curve-line" />
         <circle cx="${markerX}" cy="${markerY}" r="6" class="curve-marker" />
-        <text x="${Math.min(markerX + 10, width - 230)}" y="${Math.max(markerY - 10, 18)}" class="chart-label">${formatQuantity(markerQty)} shares · ${percent(marker.theoreticalReductionCaptured * 100)} reduction reached</text>
+        <text x="${Math.min(markerX + 10, width - 230)}" y="${Math.max(markerY - 10, 18)}" class="chart-label">${formatQuantity(markerQty)} ${t('sharesSuffix')} · ${t('reductionReached', { percent: percent(marker.theoreticalReductionCaptured * 100) })}</text>
         <text x="8" y="${padY + 4}" class="chart-label">100%</text>
         <text x="16" y="${padY + plotH / 2 + 4}" class="chart-label">50%</text>
         <text x="25" y="${padY + plotH + 4}" class="chart-label">0%</text>
-        <text x="${padX}" y="${height - 10}" class="chart-label">0 shares</text>
+        <text x="${padX}" y="${height - 10}" class="chart-label">${t('zeroShares')}</text>
         <text x="${padX + plotW - 80}" y="${height - 10}" class="chart-label">${formatQuantity(xMax)}</text>
       </svg>
       </div>
@@ -842,38 +849,38 @@ function marketSnapshotPanel(position: Position | null, holding: HoldingState): 
   if (!snapshot.available) {
     return `
       <section id="market-snapshot" class="panel market-panel">
-        <div class="section-heading compact"><div><span class="eyebrow">Current price</span><h2>Position snapshot</h2></div>
-          <div class="heading-actions">${contextualHelpLink('market-snapshot')}<button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button></div>
+        <div class="section-heading compact"><div><span class="eyebrow">${t('currentPrice')}</span><h2>${t('positionSnapshot')}</h2></div>
+          <div class="heading-actions">${contextualHelpLink('market-snapshot')}<button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? t('hideDetails') : t('showSnapshot')}</button></div>
         </div>
         <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
-          <div class="empty-state compact-empty">${escapeHtml(snapshot.reason ?? 'Enter a current market price to see this snapshot.')}</div>
+          <div class="empty-state compact-empty">${t('currentPriceSnapshotNeeded')}</div>
         </div>
       </section>`;
   }
   const netTone = snapshot.netUnrealizedProfitLoss >= 0 ? 'positive' : 'negative';
   return `
     <section id="market-snapshot" class="panel market-panel">
-      <div class="section-heading compact"><div><span class="eyebrow">Current price</span><h2>Position snapshot</h2></div>
-        <div class="heading-actions">${contextualHelpLink('market-snapshot')}<button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? 'Hide details' : 'Show snapshot'}</button></div>
+      <div class="section-heading compact"><div><span class="eyebrow">${t('currentPrice')}</span><h2>${t('positionSnapshot')}</h2></div>
+        <div class="heading-actions">${contextualHelpLink('market-snapshot')}<button id="toggleMarketSnapshot" class="text-button" aria-expanded="${marketSnapshotExpanded}" aria-controls="marketSnapshot">${marketSnapshotExpanded ? t('hideDetails') : t('showSnapshot')}</button></div>
       </div>
       <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
         <div class="snapshot-grid">
-          ${metricCard('Current value', formatCurrency(snapshot.marketValue, holding), `${formatQuantity(position!.shares, holding)} shares at ${formatCurrency(holding.currentMarketPrice, holding)}`)}
-          ${metricCard('Total cost basis', formatCurrency(snapshot.basis, holding), `Average ${formatCurrency(position!.averagePrice, holding)}`)}
-          ${metricCard('Gross P/L', formatCurrency(snapshot.grossUnrealizedProfitLoss, holding), `Gross return ${percent(snapshot.grossReturnPercent)}`, '', snapshot.grossUnrealizedProfitLoss >= 0 ? 'positive' : 'negative')}
-          ${metricCard('After fees', formatCurrency(snapshot.netUnrealizedProfitLoss, holding), `Liquidation fee ${formatCurrency(snapshot.estimatedSellFee, holding)} · Net ${formatCurrency(snapshot.netLiquidationValue, holding)}`, '', netTone)}
-          ${metricCard('Break-even price', formatCurrency(snapshot.breakEvenPrice, holding), snapshot.movementToBreakEvenPercent > 0 ? `${percent(snapshot.movementToBreakEvenPercent)} rise required` : snapshot.aboveBreakEvenPercent > 0 ? `${percent(snapshot.aboveBreakEvenPercent)} above break even` : 'At break even')}
+          ${metricCard(t('currentValue'), formatCurrency(snapshot.marketValue, holding), `${formatQuantity(position!.shares, holding)} ${t('sharesSuffix')} @ ${formatCurrency(holding.currentMarketPrice, holding)}`)}
+          ${metricCard(t('totalCostBasis'), formatCurrency(snapshot.basis, holding), `${t('averageCost')} ${formatCurrency(position!.averagePrice, holding)}`)}
+          ${metricCard(t('grossProfitLoss'), formatCurrency(snapshot.grossUnrealizedProfitLoss, holding), t('grossReturn', { percent: percent(snapshot.grossReturnPercent) }), '', snapshot.grossUnrealizedProfitLoss >= 0 ? 'positive' : 'negative')}
+          ${metricCard(t('afterFees'), formatCurrency(snapshot.netUnrealizedProfitLoss, holding), t('liquidationFee', { fee: formatCurrency(snapshot.estimatedSellFee, holding), net: formatCurrency(snapshot.netLiquidationValue, holding) }), '', netTone)}
+          ${metricCard(t('breakEvenPrice'), formatCurrency(snapshot.breakEvenPrice, holding), snapshot.movementToBreakEvenPercent > 0 ? t('riseRequired', { percent: percent(snapshot.movementToBreakEvenPercent) }) : snapshot.aboveBreakEvenPercent > 0 ? t('aboveBreakEven', { percent: percent(snapshot.aboveBreakEvenPercent) }) : t('atBreakEven'))}
         </div>
         ${planned && holding.transactions.length ? `
           <div class="after-plan-snapshot">
-            <span class="eyebrow">After planned transactions</span>
+            <span class="eyebrow">${t('afterPlannedTransactions')}</span>
             <div class="result-strip six">
-              <div><span>Resulting shares</span><strong>${formatQuantity(planned.finalPosition.shares, holding)}</strong></div>
-              <div><span>Resulting average</span><strong>${planned.finalPosition.shares > 0 ? formatCurrency(planned.finalPosition.averagePrice, holding) : 'Closed'}</strong></div>
-              <div><span>Cost basis</span><strong>${formatCurrency(planned.resultingBasis, holding)}</strong></div>
-              <div><span>Unrealized P/L</span><strong class="${planned.unrealizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(planned.unrealizedProfitLoss, holding)}</strong></div>
-              <div><span>Realized P/L</span><strong class="${planned.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(planned.realizedProfitLoss, holding)}</strong></div>
-              <div><span>Plan cash flow / fees</span><strong>${formatCurrency(planned.netPlannedCashFlow, holding)} / ${formatCurrency(planned.totalFees, holding)}</strong></div>
+              <div><span>${t('resultingShares')}</span><strong>${formatQuantity(planned.finalPosition.shares, holding)}</strong></div>
+              <div><span>${t('resultingAverage')}</span><strong>${planned.finalPosition.shares > 0 ? formatCurrency(planned.finalPosition.averagePrice, holding) : t('closed')}</strong></div>
+              <div><span>${t('costBasis')}</span><strong>${formatCurrency(planned.resultingBasis, holding)}</strong></div>
+              <div><span>${t('unrealizedProfitLoss')}</span><strong class="${planned.unrealizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(planned.unrealizedProfitLoss, holding)}</strong></div>
+              <div><span>${t('realizedProfitLoss')}</span><strong class="${planned.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(planned.realizedProfitLoss, holding)}</strong></div>
+              <div><span>${t('planCashFlowFees')}</span><strong>${formatCurrency(planned.netPlannedCashFlow, holding)} / ${formatCurrency(planned.totalFees, holding)}</strong></div>
             </div>
           </div>` : ''}
       </div>
@@ -893,55 +900,55 @@ function targetsPanel(position: Position, holding: HoldingState): string {
   const sellResult = salePriceForTarget(position, { shares: sellShares, mode: holding.targetSellMode, targetValue: holding.targetSellValue, fee: holding.sellFee });
   const averageBody = averageResult.achievable ? `
     <div class="result-strip six">
-      <div><span>Shares needed</span><strong>${formatQuantity(averageResult.requiredShares, holding)}</strong></div>
-      <div><span>Gross purchase</span><strong>${formatCurrency(averageResult.grossAmount, holding)}</strong></div>
-      <div><span>Fee</span><strong>${formatCurrency(averageResult.feeAmount, holding)}</strong></div>
-      <div><span>Total cash needed</span><strong>${formatCurrency(averageResult.totalAmount, holding)}</strong></div>
-      <div><span>Actual average</span><strong>${formatCurrency(averageResult.resultingPosition.averagePrice, holding)}</strong></div>
-      <div><span>Average lowered</span><strong class="positive">${formatCurrency(averageResult.averageLowered, holding)}</strong></div>
+      <div><span>${t('sharesNeeded')}</span><strong>${formatQuantity(averageResult.requiredShares, holding)}</strong></div>
+      <div><span>${t('grossPurchase')}</span><strong>${formatCurrency(averageResult.grossAmount, holding)}</strong></div>
+      <div><span>${t('fee')}</span><strong>${formatCurrency(averageResult.feeAmount, holding)}</strong></div>
+      <div><span>${t('totalCashNeeded')}</span><strong>${formatCurrency(averageResult.totalAmount, holding)}</strong></div>
+      <div><span>${t('actualAverage')}</span><strong>${formatCurrency(averageResult.resultingPosition.averagePrice, holding)}</strong></div>
+      <div><span>${t('averageLowered')}</span><strong class="positive">${formatCurrency(averageResult.averageLowered, holding)}</strong></div>
     </div>
-    <p class="simple-note">Requested target: ${formatCurrency(holding.targetAverage, holding)}. ${averageResult.targetReached ? 'The rounded share amount reaches or improves on it.' : 'Rounding changes the actual resulting average shown above.'}${averageResult.exceedsBudget ? ` This requires ${formatCurrency(averageResult.totalAmount - holding.budget, holding)} more than the configured budget.` : ''}</p>`
-    : `<div class="plain-summary warning-summary"><span>Target result</span><strong>${escapeHtml(averageResult.reason ?? 'This target is not achievable.')}</strong></div>`;
+    <p class="simple-note">${t('requestedTarget', { target: formatCurrency(holding.targetAverage, holding) })} ${averageResult.targetReached ? t('roundedTargetReached') : t('roundedTargetChanged')}${averageResult.exceedsBudget ? ` ${t('budgetExcess', { amount: formatCurrency(averageResult.totalAmount - holding.budget, holding) })}` : ''}</p>`
+    : `<div class="plain-summary warning-summary"><span>${t('targetResult')}</span><strong>${t('targetNotAchievable')}</strong></div>`;
   const sellBody = sellResult.valid ? `
     <div class="result-strip six">
-      <div><span>Shares sold</span><strong>${formatQuantity(sellResult.shares, holding)}</strong></div>
-      <div><span>Cost basis sold</span><strong>${formatCurrency(sellResult.costBasisSold, holding)}</strong></div>
-      <div><span>Break-even / target price</span><strong>${formatCurrency(sellResult.requiredPrice, holding)}</strong></div>
-      <div><span>Gross proceeds</span><strong>${formatCurrency(sellResult.grossAmount, holding)}</strong></div>
-      <div><span>Fee / net proceeds</span><strong>${formatCurrency(sellResult.feeAmount, holding)} / ${formatCurrency(sellResult.netAmount, holding)}</strong></div>
-      <div><span>Profit / return</span><strong class="${sellResult.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(sellResult.realizedProfitLoss, holding)} / ${percent(sellResult.returnPercent)}</strong></div>
+      <div><span>${t('sharesSold')}</span><strong>${formatQuantity(sellResult.shares, holding)}</strong></div>
+      <div><span>${t('costBasisSold')}</span><strong>${formatCurrency(sellResult.costBasisSold, holding)}</strong></div>
+      <div><span>${t('breakEvenTargetPrice')}</span><strong>${formatCurrency(sellResult.requiredPrice, holding)}</strong></div>
+      <div><span>${t('grossProceeds')}</span><strong>${formatCurrency(sellResult.grossAmount, holding)}</strong></div>
+      <div><span>${t('feeNetProceeds')}</span><strong>${formatCurrency(sellResult.feeAmount, holding)} / ${formatCurrency(sellResult.netAmount, holding)}</strong></div>
+      <div><span>${t('profitReturn')}</span><strong class="${sellResult.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(sellResult.realizedProfitLoss, holding)} / ${percent(sellResult.returnPercent)}</strong></div>
     </div>
-    <p class="simple-note">Remaining position: ${formatQuantity(sellResult.remainingPosition.shares, holding)} shares${sellResult.remainingPosition.shares ? ` at ${formatCurrency(sellResult.remainingPosition.averagePrice, holding)} average` : ', closed'}.</p>`
-    : `<div class="plain-summary warning-summary"><span>Sale target</span><strong>${escapeHtml(sellResult.reason ?? 'Enter valid sale details.')}</strong></div>`;
+    <p class="simple-note">${t('remainingPosition', { shares: formatQuantity(sellResult.remainingPosition.shares, holding), average: sellResult.remainingPosition.shares ? t('averageAt', { average: formatCurrency(sellResult.remainingPosition.averagePrice, holding) }) : t('closedSuffix') })}</p>`
+    : `<div class="plain-summary warning-summary"><span>${t('saleTarget')}</span><strong>${t('enterValidSaleDetails')}</strong></div>`;
   return `
     <section id="target-tools" class="panel targets-panel">
-      <div class="section-heading"><div><span class="eyebrow">Targets</span><h2>Plan an average or exit price</h2></div>
-        <div class="heading-actions">${contextualHelpLink('target-tools')}<button id="toggleTargets" class="text-button" aria-expanded="${targetsExpanded}" aria-controls="targetsContent">${targetsExpanded ? 'Hide targets' : 'Show targets'}</button></div>
+      <div class="section-heading"><div><span class="eyebrow">${t('targets')}</span><h2>${t('planAverageOrExit')}</h2></div>
+        <div class="heading-actions">${contextualHelpLink('target-tools')}<button id="toggleTargets" class="text-button" aria-expanded="${targetsExpanded}" aria-controls="targetsContent">${targetsExpanded ? t('hideTargets') : t('showTargets')}</button></div>
       </div>
       <div id="targetsContent" class="disclosure-content ${targetsExpanded ? 'is-expanded' : ''}">
-        <div class="segmented-control target-tabs" aria-label="Target calculator"><button data-target-tab="average" class="${targetTab === 'average' ? 'active' : ''}">Target average</button><button data-target-tab="sell" class="${targetTab === 'sell' ? 'active' : ''}">Break-even / profit</button></div>
+        <div class="segmented-control target-tabs" aria-label="${t('targetCalculator')}"><button data-target-tab="average" class="${targetTab === 'average' ? 'active' : ''}">${t('targetAverage')}</button><button data-target-tab="sell" class="${targetTab === 'sell' ? 'active' : ''}">${t('breakEvenProfit')}</button></div>
         ${targetTab === 'average' ? `
           <div class="target-form field-grid three">
-            ${field('targetAverage', 'Target average', holding.targetAverage, 'number', '45')}
-            ${field('targetBuyPrice', 'Buy price', holding.targetBuyPrice, 'number', '40')}
-            <label class="check-field"><input id="targetRespectBudget" type="checkbox" ${holding.targetRespectBudget ? 'checked' : ''} /> Respect maximum budget</label>
+            ${field('targetAverage', t('targetAverage'), holding.targetAverage, 'number', '45')}
+            ${field('targetBuyPrice', t('buyPricePerShare'), holding.targetBuyPrice, 'number', '40')}
+            <label class="check-field"><input id="targetRespectBudget" type="checkbox" ${holding.targetRespectBudget ? 'checked' : ''} /> ${t('respectMaximumBudget')}</label>
           </div>${averageBody}` : `
           <div class="target-form field-grid three">
-            ${field('targetSellShares', 'Shares to sell', sellShares, 'number', '100')}
-            <div class="segmented-control compact-target-mode" aria-label="Sale target mode"><button data-target-sell-mode="breakEven" class="${holding.targetSellMode === 'breakEven' ? 'active' : ''}">Break even</button><button data-target-sell-mode="profit" class="${holding.targetSellMode === 'profit' ? 'active' : ''}">Profit</button><button data-target-sell-mode="return" class="${holding.targetSellMode === 'return' ? 'active' : ''}">Return %</button></div>
-            ${holding.targetSellMode === 'breakEven' ? '<div class="target-placeholder">Uses your active sell fee.</div>' : field('targetSellValue', holding.targetSellMode === 'profit' ? 'Profit target' : 'Target return percent', holding.targetSellValue, 'number', holding.targetSellMode === 'profit' ? '500' : '10')}
+            ${field('targetSellShares', t('sharesToSell'), sellShares, 'number', '100')}
+            <div class="segmented-control compact-target-mode" aria-label="${t('saleTargetMode')}"><button data-target-sell-mode="breakEven" class="${holding.targetSellMode === 'breakEven' ? 'active' : ''}">${t('breakEven')}</button><button data-target-sell-mode="profit" class="${holding.targetSellMode === 'profit' ? 'active' : ''}">${t('profit')}</button><button data-target-sell-mode="return" class="${holding.targetSellMode === 'return' ? 'active' : ''}">${t('returnPercent')}</button></div>
+            ${holding.targetSellMode === 'breakEven' ? `<div class="target-placeholder">${t('usesActiveSellFee')}</div>` : field('targetSellValue', holding.targetSellMode === 'profit' ? t('profitTarget') : t('targetReturnPercent'), holding.targetSellValue, 'number', holding.targetSellMode === 'profit' ? '500' : '10')}
           </div>${sellBody}`}
       </div>
     </section>`;
 }
 
 function dataManagementPanel(holding: HoldingState): string {
-  const preview = pendingImport ? (() => { const scenarioTransactions = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.length : 0), 0); const executed = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && (transaction as { status?: unknown }).status === 'executed').length : 0), 0); const applied = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && Boolean((transaction as { appliedAt?: unknown }).appliedAt)).length : 0), 0); return `<div class="import-preview"><strong>Backup preview</strong><span>${pendingImport.positions.length} positions · ${pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0)} plan transactions · ${pendingImport.scenarios.length} scenarios</span><span>${scenarioTransactions} scenario transactions · ${executed} executed · ${applied} applied</span><span>Exported ${escapeHtml(pendingImport.exportedAt)} · backup schema ${pendingImport.backupSchemaVersion}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">Merge with current data</button><button id="applyReplaceImport" class="text-button danger-text">Replace all current data</button></div></div>`; })() : '';
+  const preview = pendingImport ? (() => { const scenarioTransactions = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.length : 0), 0); const executed = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && (transaction as { status?: unknown }).status === 'executed').length : 0), 0); const applied = pendingImport.scenarios.reduce((total, scenario) => total + (Array.isArray(scenario.transactions) ? scenario.transactions.filter((transaction) => transaction && typeof transaction === 'object' && Boolean((transaction as { appliedAt?: unknown }).appliedAt)).length : 0), 0); return `<div class="import-preview"><strong>${t('backupPreview')}</strong><span>${formatLocalizedNumber(pendingImport.positions.length)} ${t('positions')} · ${formatLocalizedNumber(pendingImport.positions.reduce((total, position) => total + (Array.isArray(position.transactions) ? position.transactions.length : 0), 0))} ${t('planTransactions')} · ${formatLocalizedNumber(pendingImport.scenarios.length)} ${t('savedScenarios')}</span><span>${formatLocalizedNumber(scenarioTransactions)} ${t('scenarioTransactionsCount')} · ${formatLocalizedNumber(executed)} ${t('executed')} · ${formatLocalizedNumber(applied)} ${t('applied')}</span><span>${t('exportedAt', { date: formatDateTime(pendingImport.exportedAt) })} · ${t('backupSchema', { version: String(pendingImport.backupSchemaVersion) })}</span><div class="button-row"><button id="applyMergeImport" class="secondary-button">${t('mergeCurrentData')}</button><button id="applyReplaceImport" class="text-button danger-text">${t('replaceCurrentData')}</button></div></div>`; })() : '';
   return `
     <section id="data-management" class="panel data-panel">
-      <div class="section-heading"><div><span class="eyebrow">Data management</span><h2>Backup, restore, and export</h2></div>${contextualHelpLink('backup-export')}</div>
-      <p class="helper-text">Everything stays in this browser. Different website origins keep separate browser data.</p>
-      <div class="button-row data-actions"><button id="exportAll" class="secondary-button">Export all positions</button><button id="exportActive" class="secondary-button">Export active position</button><button id="exportCsv" class="secondary-button" ${holding.transactions.length ? '' : 'disabled'}>Export plan CSV</button><label class="secondary-button file-button">Import JSON<input id="importJson" type="file" accept="application/json,.json" hidden /></label></div>
+      <div class="section-heading"><div><span class="eyebrow">${t('dataManagement')}</span><h2>${t('backupRestoreExport')}</h2></div>${contextualHelpLink('backup-export')}</div>
+      <p class="helper-text">${t('browserDataNotice')}</p>
+      <div class="button-row data-actions"><button id="exportAll" class="secondary-button">${t('exportAllPositions')}</button><button id="exportActive" class="secondary-button">${t('exportActivePosition')}</button><button id="exportCsv" class="secondary-button" ${holding.transactions.length ? '' : 'disabled'}>${t('exportPlanCsv')}</button><label class="secondary-button file-button">${t('importJson')}<input id="importJson" type="file" accept="application/json,.json" hidden /></label></div>
       ${preview}
     </section>`;
 }
@@ -958,14 +965,14 @@ function createScenarioFromHolding(name = ''): Scenario | null {
   const holding = activeHolding();
   const base = validBasePosition(holding);
   if (!base) {
-    notice = 'Enter a valid current position before creating a scenario.';
+    notice = t('validPositionBeforeScenario');
     return null;
   }
   const timestamp = new Date().toISOString();
   const scenario: Scenario = {
     id: createId(),
     holdingId: holding.id,
-    name: name || `${holding.ticker || 'Position'} scenario`,
+    name: name || t('scenarioDefaultName', { position: holding.ticker || t('positionLabel') }),
     note: '',
     status: 'draft',
     createdAt: timestamp,
@@ -1010,12 +1017,12 @@ function scenarioSummaryPanel(scenario: Scenario, holding: HoldingState): string
   const summary = summarizeScenario(scenario, holding.sellFee);
   return `
     <div class="scenario-summary result-strip six">
-      <div><span>Final shares</span><strong>${formatQuantity(summary.finalPosition.shares, holding)}</strong></div>
-      <div><span>Final average</span><strong>${summary.finalPosition.shares ? formatCurrency(summary.finalPosition.averagePrice, holding) : 'Closed'}</strong></div>
-      <div><span>Total fees</span><strong>${formatCurrency(summary.totalFees, holding)}</strong></div>
-      <div><span>Realized P/L</span><strong class="${summary.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.realizedProfitLoss, holding)}</strong></div>
-      <div><span>Unrealized P/L</span><strong class="${summary.unrealizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.unrealizedProfitLoss, holding)}</strong></div>
-      <div><span>Break-even</span><strong>${formatCurrency(summary.breakEvenPrice, holding)}</strong></div>
+      <div><span>${t('finalShares')}</span><strong>${formatQuantity(summary.finalPosition.shares, holding)}</strong></div>
+      <div><span>${t('finalAverage')}</span><strong>${summary.finalPosition.shares ? formatCurrency(summary.finalPosition.averagePrice, holding) : t('closed')}</strong></div>
+      <div><span>${t('totalFees')}</span><strong>${formatCurrency(summary.totalFees, holding)}</strong></div>
+      <div><span>${t('totalProfitLoss')}</span><strong class="${summary.realizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.realizedProfitLoss, holding)}</strong></div>
+      <div><span>${t('unrealizedProfitLoss')}</span><strong class="${summary.unrealizedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.unrealizedProfitLoss, holding)}</strong></div>
+      <div><span>${t('breakEven')}</span><strong>${formatCurrency(summary.breakEvenPrice, holding)}</strong></div>
     </div>`;
 }
 
@@ -1025,60 +1032,60 @@ function ladderPanel(scenario: Scenario, holding: HoldingState): string {
   const activeFee = activeLadderFee(ladder);
   const rows = projection.map((row, index) => `
     <article class="ladder-card">
-      <div class="scenario-card-heading"><strong>Level ${index + 1}</strong><span>Total ${formatCurrency(row.totalAmount, holding)}</span></div>
+      <div class="scenario-card-heading"><strong>${t('level')} ${index + 1}</strong><span>${t('total')} ${formatCurrency(row.totalAmount, holding)}</span></div>
       <div class="ladder-edit-grid">
-        <label class="field"><span>Price</span><input data-ladder-price="${row.level.id}" type="number" value="${row.level.price}" min="0" step="any" inputmode="decimal" /></label>
-        <label class="field"><span>Shares</span><input data-ladder-shares="${row.level.id}" type="number" value="${row.level.shares}" min="0" step="any" inputmode="decimal" /></label>
+        <label class="field"><span>${t('price')}</span><input data-ladder-price="${row.level.id}" type="number" value="${row.level.price}" min="0" step="any" inputmode="decimal" /></label>
+        <label class="field"><span>${t('shares')}</span><input data-ladder-shares="${row.level.id}" type="number" value="${row.level.shares}" min="0" step="any" inputmode="decimal" /></label>
       </div>
-      <dl><div><dt>Gross / fee</dt><dd>${formatCurrency(row.grossAmount, holding)} / ${formatCurrency(row.feeAmount, holding)}</dd></div><div><dt>Cumulative shares</dt><dd>${formatQuantity(row.cumulativePosition.shares, holding)}</dd></div><div><dt>Cumulative basis</dt><dd>${formatCurrency(row.cumulativePosition.shares * row.cumulativePosition.averagePrice, holding)}</dd></div><div><dt>Cumulative average</dt><dd>${formatCurrency(row.cumulativePosition.averagePrice, holding)}</dd></div></dl>
-      <div class="button-row"><button class="text-button" data-ladder-up="${row.level.id}" ${index === 0 ? 'disabled' : ''}>Move up</button><button class="text-button" data-ladder-down="${row.level.id}" ${index === projection.length - 1 ? 'disabled' : ''}>Move down</button><button class="text-button" data-ladder-duplicate="${row.level.id}">Duplicate</button><button class="text-button danger-text" data-ladder-remove="${row.level.id}">Remove</button></div>
+      <dl><div><dt>${t('grossFee')}</dt><dd>${formatCurrency(row.grossAmount, holding)} / ${formatCurrency(row.feeAmount, holding)}</dd></div><div><dt>${t('cumulativeShares')}</dt><dd>${formatQuantity(row.cumulativePosition.shares, holding)}</dd></div><div><dt>${t('cumulativeBasis')}</dt><dd>${formatCurrency(row.cumulativePosition.shares * row.cumulativePosition.averagePrice, holding)}</dd></div><div><dt>${t('cumulativeAverage')}</dt><dd>${formatCurrency(row.cumulativePosition.averagePrice, holding)}</dd></div></dl>
+      <div class="button-row"><button class="text-button" data-ladder-up="${row.level.id}" ${index === 0 ? 'disabled' : ''}>${t('moveUp')}</button><button class="text-button" data-ladder-down="${row.level.id}" ${index === projection.length - 1 ? 'disabled' : ''}>${t('moveDown')}</button><button class="text-button" data-ladder-duplicate="${row.level.id}">${t('duplicate')}</button><button class="text-button danger-text" data-ladder-remove="${row.level.id}">${t('remove')}</button></div>
     </article>`).join('');
   return `
     <section id="dca-ladder" class="subpanel ladder-panel">
-      <div class="section-heading compact"><div><span class="eyebrow">DCA ladder</span><h3>Build staged buys</h3></div><div class="heading-actions">${contextualHelpLink('dca-ladder')}<button id="exportLadderCsv" class="text-button" ${projection.length ? '' : 'disabled'}>Export ladder CSV</button></div></div>
+      <div class="section-heading compact"><div><span class="eyebrow">${t('dcaLadder')}</span><h3>${t('buildStagedBuys')}</h3></div><div class="heading-actions">${contextualHelpLink('dca-ladder')}<button id="exportLadderCsv" class="text-button" ${projection.length ? '' : 'disabled'}>${t('exportLadderCsv')}</button></div></div>
       <div class="field-grid three">
-        ${field('ladderLevels', 'Levels', ladder.levelCount, 'number', '4', '1')}
-        ${field('ladderStart', 'Start price', ladder.startPrice, 'number', '40')}
-        ${field('ladderEnd', 'End price', ladder.endPrice, 'number', '30')}
-        ${field('ladderInvestment', ladder.distribution === 'equalShares' ? 'Total shares' : 'All-in cash', ladder.distribution === 'equalShares' ? ladder.totalShares : ladder.totalInvestment, 'number', '1000')}
-        ${field('ladderShareStep', 'Share precision', ladder.sharePrecision, 'number', '1')}
-        ${field('ladderPricePrecision', 'Price precision', ladder.pricePrecision, 'number', '2', '1')}
+        ${field('ladderLevels', t('levels'), ladder.levelCount, 'number', '4', '1')}
+        ${field('ladderStart', t('startPrice'), ladder.startPrice, 'number', '40')}
+        ${field('ladderEnd', t('endPrice'), ladder.endPrice, 'number', '30')}
+        ${field('ladderInvestment', ladder.distribution === 'equalShares' ? t('totalShares') : t('allInCash'), ladder.distribution === 'equalShares' ? ladder.totalShares : ladder.totalInvestment, 'number', '1000')}
+        ${field('ladderShareStep', t('sharePrecision'), ladder.sharePrecision, 'number', '1')}
+        ${field('ladderPricePrecision', t('pricePrecision'), ladder.pricePrecision, 'number', '2', '1')}
       </div>
-      <div class="segmented-control scenario-segment" aria-label="DCA distribution"><button data-ladder-distribution="equalCash" class="${ladder.distribution === 'equalCash' ? 'active' : ''}">Equal cash</button><button data-ladder-distribution="equalShares" class="${ladder.distribution === 'equalShares' ? 'active' : ''}">Equal shares</button><button data-ladder-distribution="custom" class="${ladder.distribution === 'custom' ? 'active' : ''}">Custom</button></div>
-      <div class="segmented-control scenario-segment" aria-label="DCA spacing"><button data-ladder-spacing="linear" class="${ladder.spacing === 'linear' ? 'active' : ''}">Linear prices</button><button data-ladder-spacing="percent" class="${ladder.spacing === 'percent' ? 'active' : ''}">Equal percent</button></div>
-      <div class="fee-controls compact-fee" aria-label="Ladder fee"><span class="fee-controls-label">Ladder fee</span><div class="segmented-control fee-mode-control"><button data-ladder-fee-mode="percent" class="${ladder.feeMode === 'percent' ? 'active' : ''}">Percent</button><button data-ladder-fee-mode="fixed" class="${ladder.feeMode === 'fixed' ? 'active' : ''}">Fixed</button></div>${field('ladderFee', ladder.feeMode === 'fixed' ? 'Fixed fee' : 'Fee percent', activeFee.value, 'number', '0')}</div>
-      <label class="check-field"><input id="ladderIncludeCurrent" type="checkbox" ${ladder.includeCurrentPosition ? 'checked' : ''} /> Include current position in cumulative average</label>
-      <div class="button-row"><button id="generateLadder" class="secondary-button">Generate ladder</button><button id="addLadderLevel" class="secondary-button">Add level</button><button id="clearLadder" class="text-button">Clear</button></div>
-      ${projection.length ? `<div class="ladder-cards">${rows}</div>` : '<div class="empty-state compact-empty">Generate levels, then review each price and quantity in this scenario.</div>'}
+      <div class="segmented-control scenario-segment" aria-label="${t('dcaDistribution')}"><button data-ladder-distribution="equalCash" class="${ladder.distribution === 'equalCash' ? 'active' : ''}">${t('equalCash')}</button><button data-ladder-distribution="equalShares" class="${ladder.distribution === 'equalShares' ? 'active' : ''}">${t('equalShares')}</button><button data-ladder-distribution="custom" class="${ladder.distribution === 'custom' ? 'active' : ''}">${t('custom')}</button></div>
+      <div class="segmented-control scenario-segment" aria-label="${t('dcaSpacing')}"><button data-ladder-spacing="linear" class="${ladder.spacing === 'linear' ? 'active' : ''}">${t('linearPrices')}</button><button data-ladder-spacing="percent" class="${ladder.spacing === 'percent' ? 'active' : ''}">${t('equalPercent')}</button></div>
+      <div class="fee-controls compact-fee" aria-label="${t('ladderFee')}"><span class="fee-controls-label">${t('ladderFee')}</span><div class="segmented-control fee-mode-control"><button data-ladder-fee-mode="percent" class="${ladder.feeMode === 'percent' ? 'active' : ''}">${t('percent')}</button><button data-ladder-fee-mode="fixed" class="${ladder.feeMode === 'fixed' ? 'active' : ''}">${t('fixed')}</button></div>${field('ladderFee', ladder.feeMode === 'fixed' ? t('fixedFee') : t('feePercent'), activeFee.value, 'number', '0')}</div>
+      <label class="check-field"><input id="ladderIncludeCurrent" type="checkbox" ${ladder.includeCurrentPosition ? 'checked' : ''} /> ${t('includeCurrentInAverage')}</label>
+      <div class="button-row"><button id="generateLadder" class="secondary-button">${t('generateLadder')}</button><button id="addLadderLevel" class="secondary-button">${t('addLevel')}</button><button id="clearLadder" class="text-button">${t('clear')}</button></div>
+      ${projection.length ? `<div class="ladder-cards">${rows}</div>` : `<div class="empty-state compact-empty">${t('ladderEmpty')}</div>`}
     </section>`;
 }
 
 function scenarioTransactionsPanel(scenario: Scenario, holding: HoldingState): string {
-  if (!scenario.transactions.length) return `<div class="empty-state compact-empty">No scenario rows yet. Generate a ladder or save the ordinary plan as a scenario.</div>`;
+  if (!scenario.transactions.length) return `<div class="empty-state compact-empty">${t('noScenarioRows')}</div>`;
   return `<div class="scenario-transaction-cards">${scenario.transactions.map((transaction) => `
     <article class="transaction-card">
-      <div class="transaction-card-heading"><span class="action-tag ${transaction.type}">${transaction.type === 'buy' ? 'Buy' : 'Sell'}</span><span class="status-tag ${transaction.status}">${transaction.status}</span></div>
-      <dl><div><dt>Planned</dt><dd>${formatQuantity(transaction.shares, holding)} @ ${formatCurrency(transaction.price, holding)}</dd></div><div><dt>Fee</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>Execution</dt><dd>${transaction.executionDate || 'Not recorded'}</dd></div><div><dt>Applied</dt><dd>${transaction.appliedAt ? 'Applied' : 'Not applied'}</dd></div></dl>
-      <div class="ladder-edit-grid"><label class="field"><span>Actual price</span><input data-execution-price="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionPrice ?? transaction.price}" /></label><label class="field"><span>Actual shares</span><input data-execution-shares="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionShares ?? transaction.shares}" /></label><label class="field"><span>Actual fee</span><input data-actual-fee="${transaction.id}" type="number" min="0" step="any" value="${transaction.actualFee ?? ''}" placeholder="Use planned" /></label><label class="field"><span>Execution date</span><input data-execution-date="${transaction.id}" type="datetime-local" value="${transaction.executionDate ?? ''}" /></label></div>
-      <label class="field"><span>Note</span><input data-transaction-note="${transaction.id}" type="text" value="${escapeHtml(transaction.note ?? '')}" placeholder="Optional note" /></label>
-      <label class="field"><span>Broker / account</span><input data-broker-label="${transaction.id}" type="text" value="${escapeHtml(transaction.brokerLabel ?? '')}" placeholder="Optional label" /></label>
-      <div class="button-row"><button class="text-button" data-transaction-status="${transaction.id}" data-status="planned">Planned</button><button class="text-button" data-transaction-status="${transaction.id}" data-status="executed">Executed</button><button class="text-button danger-text" data-transaction-status="${transaction.id}" data-status="cancelled">Cancelled</button></div>
+      <div class="transaction-card-heading"><span class="action-tag ${transaction.type}">${transaction.type === 'buy' ? t('buy') : t('sell')}</span><span class="status-tag ${transaction.status}">${t(transaction.status)}</span></div>
+      <dl><div><dt>${t('planned')}</dt><dd>${formatQuantity(transaction.shares, holding)} @ ${formatCurrency(transaction.price, holding)}</dd></div><div><dt>${t('fee')}</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>${t('executionDate')}</dt><dd>${transaction.executionDate ? formatDateTime(transaction.executionDate) : t('notRecorded')}</dd></div><div><dt>${t('applied')}</dt><dd>${transaction.appliedAt ? t('applied') : t('notApplied')}</dd></div></dl>
+      <div class="ladder-edit-grid"><label class="field"><span>${t('actualPrice')}</span><input data-execution-price="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionPrice ?? transaction.price}" /></label><label class="field"><span>${t('actualShares')}</span><input data-execution-shares="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionShares ?? transaction.shares}" /></label><label class="field"><span>${t('actualFee')}</span><input data-actual-fee="${transaction.id}" type="number" min="0" step="any" value="${transaction.actualFee ?? ''}" placeholder="${t('usePlanned')}" /></label><label class="field"><span>${t('executionDate')}</span><input data-execution-date="${transaction.id}" type="datetime-local" value="${transaction.executionDate ?? ''}" /></label></div>
+      <label class="field"><span>${t('note')}</span><input data-transaction-note="${transaction.id}" type="text" value="${escapeHtml(transaction.note ?? '')}" placeholder="${t('optionalNote')}" /></label>
+      <label class="field"><span>${t('brokerAccount')}</span><input data-broker-label="${transaction.id}" type="text" value="${escapeHtml(transaction.brokerLabel ?? '')}" placeholder="${t('optionalLabel')}" /></label>
+      <div class="button-row"><button class="text-button" data-transaction-status="${transaction.id}" data-status="planned">${t('planned')}</button><button class="text-button" data-transaction-status="${transaction.id}" data-status="executed">${t('executed')}</button><button class="text-button danger-text" data-transaction-status="${transaction.id}" data-status="cancelled">${t('cancelled')}</button></div>
     </article>`).join('')}</div>`;
 }
 
 function scenarioPlannerPanel(holding: HoldingState): string {
   const scenario = loadedScenario();
   const content = scenario ? `
-    <div class="field-grid two">${field('scenarioName', 'Scenario name', scenario.name, 'text', 'Scenario')}<label class="field"><span>Status</span><select id="scenarioStatus">${(['draft', 'active', 'completed', 'archived'] as ScenarioStatus[]).map((status) => `<option value="${status}" ${scenario.status === status ? 'selected' : ''}>${status[0]!.toUpperCase() + status.slice(1)}</option>`).join('')}</select></label>${field('scenarioMarketPrice', 'Scenario market price', scenario.marketPrice, 'number', '50')}<label class="field"><span>Scenario note</span><input id="scenarioNote" type="text" value="${escapeHtml(scenario.note)}" placeholder="Optional note" /></label></div>
+    <div class="field-grid two">${field('scenarioName', t('scenarioName'), scenario.name, 'text', t('scenarioName'))}<label class="field"><span>${t('status')}</span><select id="scenarioStatus">${(['draft', 'active', 'completed', 'archived'] as ScenarioStatus[]).map((status) => `<option value="${status}" ${scenario.status === status ? 'selected' : ''}>${t(status)}</option>`).join('')}</select></label>${field('scenarioMarketPrice', t('scenarioMarketPrice'), scenario.marketPrice, 'number', '50')}<label class="field"><span>${t('scenarioNote')}</span><input id="scenarioNote" type="text" value="${escapeHtml(scenario.note)}" placeholder="${t('optionalNote')}" /></label></div>
     ${scenarioSummaryPanel(scenario, holding)}
     ${ladderPanel(scenario, holding)}
-    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Scenario transactions</span><h3>Planned, executed, and cancelled</h3></div><button id="exportScenarioCsv" class="text-button">Export scenario CSV</button></div>${scenarioTransactionsPanel(scenario, holding)}</section>
+    <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">${t('scenarioTransactions')}</span><h3>${t('plannedExecutedCancelled')}</h3></div><button id="exportScenarioCsv" class="text-button">${t('exportScenarioCsv')}</button></div>${scenarioTransactionsPanel(scenario, holding)}</section>
     ${stressPanel(scenario, holding)}
     ${reverseSellPanel(scenario, holding)}
-    ${executionApplicationPanel(scenario, holding)}` : `<div class="empty-state">Create or load a scenario to explore a ladder, recorded trades, comparison, and manual stress prices without changing the saved position.</div>`;
+    ${executionApplicationPanel(scenario, holding)}` : `<div class="empty-state">${t('createOrLoadScenario')}</div>`;
   return `
     <section id="scenario-planner" class="panel scenario-planner-panel">
-      <div class="section-heading"><div><span class="eyebrow">Scenario planner</span><h2>Build before changing your position</h2></div><div class="heading-actions">${contextualHelpLink('scenario-planner')}<button id="toggleScenarioPlanner" class="text-button" aria-expanded="${scenarioPanelExpanded}" aria-controls="scenarioPlannerContent">${scenarioPanelExpanded ? 'Hide planner' : 'Show planner'}</button></div></div>
+      <div class="section-heading"><div><span class="eyebrow">${t('scenarioPlanner')}</span><h2>${t('buildBeforeChanging')}</h2></div><div class="heading-actions">${contextualHelpLink('scenario-planner')}<button id="toggleScenarioPlanner" class="text-button" aria-expanded="${scenarioPanelExpanded}" aria-controls="scenarioPlannerContent">${scenarioPanelExpanded ? t('hidePlanner') : t('showPlanner')}</button></div></div>
       <div id="scenarioPlannerContent" class="disclosure-content ${scenarioPanelExpanded ? 'is-expanded' : ''}">${content}</div>
     </section>`;
 }
@@ -1088,13 +1095,13 @@ function stressPanel(scenario: Scenario, holding: HoldingState): string {
   const baseMarket = scenario.marketPrice || holding.currentMarketPrice;
   const entries = stressPrices(scenario.stressPrices, baseMarket).filter((item) => Number.isFinite(item.price) && item.price >= 0).sort((a, b) => stressAscending ? a.price - b.price : b.price - a.price);
   return `
-    <section id="stress-tests" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Stress test</span><h3>Price outcomes</h3></div><div class="heading-actions">${contextualHelpLink('stress-tests')}<button id="toggleStressSort" class="text-button">Sort ${stressAscending ? 'descending' : 'ascending'}</button></div></div>
-      <div class="button-row"><button id="resetStressPrices" class="text-button">Reset defaults</button><button id="addStressPrice" class="text-button">Add custom price</button></div>
+    <section id="stress-tests" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">${t('stressTests')}</span><h3>${t('priceOutcomes')}</h3></div><div class="heading-actions">${contextualHelpLink('stress-tests')}<button id="toggleStressSort" class="text-button">${stressAscending ? t('sortDescending') : t('sortAscending')}</button></div></div>
+      <div class="button-row"><button id="resetStressPrices" class="text-button">${t('resetDefaults')}</button><button id="addStressPrice" class="text-button">${t('addCustomPrice')}</button></div>
       <div class="stress-cards">${entries.map(({ entry, price }) => {
         const marketValue = summary.finalPosition.shares * price;
         const unrealized = marketValue - summary.finalCostBasis - (summary.finalPosition.shares ? feeAmountForScenario(marketValue, holding.sellFee) : 0);
         const total = summary.realizedProfitLoss + unrealized;
-        return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${formatCurrency(price, holding)}</strong><button class="icon-button" data-remove-stress="${entry.id}" aria-label="Remove stress price">×</button></div><dl><div><dt>Final value</dt><dd>${formatCurrency(marketValue, holding)}</dd></div><div><dt>Unrealized P/L</dt><dd class="${unrealized >= 0 ? 'positive' : 'negative'}">${formatCurrency(unrealized, holding)}</dd></div><div><dt>Realized P/L</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>Total projected P/L</dt><dd class="${total >= 0 ? 'positive' : 'negative'}">${formatCurrency(total, holding)}</dd></div></dl></article>`;
+        return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${formatCurrency(price, holding)}</strong><button class="icon-button" data-remove-stress="${entry.id}" aria-label="${t('removeStressPrice')}">×</button></div><dl><div><dt>${t('finalValue')}</dt><dd>${formatCurrency(marketValue, holding)}</dd></div><div><dt>${t('unrealizedProfitLoss')}</dt><dd class="${unrealized >= 0 ? 'positive' : 'negative'}">${formatCurrency(unrealized, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>${t('totalProjectedProfitLoss')}</dt><dd class="${total >= 0 ? 'positive' : 'negative'}">${formatCurrency(total, holding)}</dd></div></dl></article>`;
       }).join('')}</div>
     </section>`;
 }
@@ -1108,24 +1115,24 @@ function reverseSellPanel(scenario: Scenario, holding: HoldingState): string {
   const price = reversePrice ?? scenario.marketPrice;
   const result = reverseSell({ position: scenario.basePosition, fee: holding.sellFee, shareStep: holding.shareStep, mode: reverseMode, direction: reverseDirection, shares, price, targetValue: reverseTarget });
   return `
-    <section id="reverse-sell" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Reverse sell</span><h3>Plan an exit</h3></div><div class="heading-actions">${contextualHelpLink('reverse-sell')}<button id="toggleReverseSell" class="text-button" aria-expanded="${reverseSellExpanded}">${reverseSellExpanded ? 'Hide' : 'Show'}</button></div></div>
-    <div class="disclosure-content ${reverseSellExpanded ? 'is-expanded' : ''}"><div class="segmented-control scenario-segment"><button data-reverse-direction="price" class="${reverseDirection === 'price' ? 'active' : ''}">Solve price</button><button data-reverse-direction="shares" class="${reverseDirection === 'shares' ? 'active' : ''}">Solve shares</button></div><div class="segmented-control scenario-segment"><button data-reverse-mode="profit" class="${reverseMode === 'profit' ? 'active' : ''}">Profit</button><button data-reverse-mode="return" class="${reverseMode === 'return' ? 'active' : ''}">Return %</button><button data-reverse-mode="netProceeds" class="${reverseMode === 'netProceeds' ? 'active' : ''}">Net proceeds</button><button data-reverse-mode="breakEven" class="${reverseMode === 'breakEven' ? 'active' : ''}">Break even</button></div><div class="field-grid three">${field('reverseShares', 'Shares to sell', shares, 'number', '100')}${field('reversePrice', 'Sale price', price, 'number', '60')}${field('reverseTarget', reverseMode === 'return' ? 'Target return %' : reverseMode === 'netProceeds' ? 'Target net proceeds' : 'Profit target', reverseTarget, 'number', '500')}</div>${result.valid ? `<div class="result-strip six"><div><span>Required price</span><strong>${formatCurrency(result.requiredPrice, holding)}</strong></div><div><span>Quantity</span><strong>${formatQuantity(result.requiredShares, holding)}</strong></div><div><span>Gross / fee</span><strong>${formatCurrency(result.grossAmount, holding)} / ${formatCurrency(result.feeAmount, holding)}</strong></div><div><span>Net proceeds</span><strong>${formatCurrency(result.netAmount, holding)}</strong></div><div><span>Realized P/L</span><strong>${formatCurrency(result.realizedProfitLoss, holding)}</strong></div><div><span>Remaining shares</span><strong>${formatQuantity(result.remainingPosition.shares, holding)}</strong></div></div>` : `<div class="plain-summary warning-summary"><strong>${escapeHtml(result.error ?? 'Enter valid reverse-sell inputs.')}</strong></div>`}</div></section>`;
+    <section id="reverse-sell" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">${t('reverseSellPlanner')}</span><h3>${t('planExit')}</h3></div><div class="heading-actions">${contextualHelpLink('reverse-sell')}<button id="toggleReverseSell" class="text-button" aria-expanded="${reverseSellExpanded}">${reverseSellExpanded ? t('hide') : t('show')}</button></div></div>
+    <div class="disclosure-content ${reverseSellExpanded ? 'is-expanded' : ''}"><div class="segmented-control scenario-segment"><button data-reverse-direction="price" class="${reverseDirection === 'price' ? 'active' : ''}">${t('solvePrice')}</button><button data-reverse-direction="shares" class="${reverseDirection === 'shares' ? 'active' : ''}">${t('solveShares')}</button></div><div class="segmented-control scenario-segment"><button data-reverse-mode="profit" class="${reverseMode === 'profit' ? 'active' : ''}">${t('profit')}</button><button data-reverse-mode="return" class="${reverseMode === 'return' ? 'active' : ''}">${t('returnPercent')}</button><button data-reverse-mode="netProceeds" class="${reverseMode === 'netProceeds' ? 'active' : ''}">${t('netProceeds')}</button><button data-reverse-mode="breakEven" class="${reverseMode === 'breakEven' ? 'active' : ''}">${t('breakEven')}</button></div><div class="field-grid three">${field('reverseShares', t('sharesToSell'), shares, 'number', '100')}${field('reversePrice', t('salePrice'), price, 'number', '60')}${field('reverseTarget', reverseMode === 'return' ? t('returnPercent') : reverseMode === 'netProceeds' ? t('netProceeds') : t('profitTarget'), reverseTarget, 'number', '500')}</div>${result.valid ? `<div class="result-strip six"><div><span>${t('requiredPrice')}</span><strong>${formatCurrency(result.requiredPrice, holding)}</strong></div><div><span>${t('quantity')}</span><strong>${formatQuantity(result.requiredShares, holding)}</strong></div><div><span>${t('grossFee')}</span><strong>${formatCurrency(result.grossAmount, holding)} / ${formatCurrency(result.feeAmount, holding)}</strong></div><div><span>${t('netProceeds')}</span><strong>${formatCurrency(result.netAmount, holding)}</strong></div><div><span>${t('totalProfitLoss')}</span><strong>${formatCurrency(result.realizedProfitLoss, holding)}</strong></div><div><span>${t('remainingShares')}</span><strong>${formatQuantity(result.remainingPosition.shares, holding)}</strong></div></div>` : `<div class="plain-summary warning-summary"><strong>${plannerMessage(result.errorCode)}</strong></div>`}</div></section>`;
 }
 
 function executionApplicationPanel(scenario: Scenario, holding: HoldingState): string {
   const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario);
   const isPending = pendingApplicationScenarioId === scenario.id;
-  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Apply recorded trades</span><h3>Update the saved position only after review</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>Review executed trades</button></div></div>${isPending ? `<div class="import-preview"><strong>Review before applying</strong><span>Rows to apply: ${preview.candidates.length} executed transaction${preview.candidates.length === 1 ? '' : 's'}. Not included: ${preview.skipped.length} Planned, Cancelled, or already Applied row${preview.skipped.length === 1 ? '' : 's'}.</span>${preview.valid ? `<span>Result: ${formatQuantity(preview.finalPosition.shares, holding)} shares at ${formatCurrency(preview.finalPosition.averagePrice, holding)} · Fees ${formatCurrency(preview.totalFees, holding)} · Realized P/L ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">Confirm position update</button><button id="cancelApplyExecuted" class="text-button">Cancel</button></div>` : `<span class="negative">${escapeHtml(preview.error ?? 'This set of recorded trades cannot be applied.')}</span>`}</div>` : '<p class="helper-text">Only valid Executed rows that have not already been Applied can update the saved position. Planned and Cancelled rows remain out of the update.</p>'}</section>`;
+  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">${t('applyExecuted')}</span><h3>${t('reviewBeforeUpdate')}</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>${t('reviewExecutedTrades')}</button></div></div>${isPending ? `<div class="import-preview"><strong>${t('reviewBeforeApplying')}</strong><span>${t('rowsToApply')}: ${formatLocalizedNumber(preview.candidates.length)}. ${t('skippedRows')}: ${formatLocalizedNumber(preview.skipped.length)}.</span>${preview.valid ? `<span>${formatQuantity(preview.finalPosition.shares, holding)} ${t('sharesSuffix')} · ${formatCurrency(preview.finalPosition.averagePrice, holding)} · ${t('totalFees')} ${formatCurrency(preview.totalFees, holding)} · ${t('totalProfitLoss')} ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">${t('confirmPositionUpdate')}</button><button id="cancelApplyExecuted" class="text-button">${t('cancel')}</button></div>` : `<span class="negative">${plannerMessage(preview.errorCode)}</span>`}</div>` : `<p class="helper-text">${t('eligibleExecutedHelp')}</p>`}</section>`;
 }
 
 function savedScenariosPanel(holding: HoldingState): string {
   const scenarios = scenarioForActiveHolding();
-  return `<section id="saved-scenarios" class="panel"><div class="section-heading"><div><span class="eyebrow">Saved scenarios</span><h2>Compare plans safely</h2></div><div class="heading-actions">${contextualHelpLink('saved-scenarios')}<div class="button-row"><button id="newScenario" class="secondary-button">New scenario</button><button id="savePlanScenario" class="secondary-button">Save current plan</button></div></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${scenario.status}</span></div><p>${escapeHtml(scenario.note || 'No note')}</p><dl><div><dt>Final position</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)} @ ${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Total P/L</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">Load</button><button class="text-button" data-duplicate-scenario="${scenario.id}">Duplicate</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? 'Restore' : 'Archive'}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">Delete</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> Compare</label></div></article>`; }).join('')}</div>` : '<div class="empty-state">No saved scenarios for this position yet.</div>'}</section>`;
+  return `<section id="saved-scenarios" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('savedScenarios')}</span><h2>${t('comparePlansSafely')}</h2></div><div class="heading-actions">${contextualHelpLink('saved-scenarios')}<div class="button-row"><button id="newScenario" class="secondary-button">${t('newScenario')}</button><button id="savePlanScenario" class="secondary-button">${t('saveCurrentPlan')}</button></div></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${t(scenario.status)}</span></div><p>${escapeHtml(scenario.note || t('noNote'))}</p><dl><div><dt>${t('finalPosition')}</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)} @ ${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">${t('load')}</button><button class="text-button" data-duplicate-scenario="${scenario.id}">${t('duplicate')}</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? t('restore') : t('archive')}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">${t('delete')}</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> ${t('compare')}</label></div></article>`; }).join('')}</div>` : `<div class="empty-state">${t('noSavedScenarios')}</div>`}</section>`;
 }
 
 function comparisonPanel(holding: HoldingState): string {
   const scenarios = store.scenarios.filter((scenario) => store.comparisonScenarioIds.includes(scenario.id) && scenario.status !== 'archived');
-  return `<section id="scenario-comparison" class="panel"><div class="section-heading"><div><span class="eyebrow">Compare</span><h2>Up to four scenarios</h2></div><div class="heading-actions">${contextualHelpLink('scenario-comparison')}<button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? 'Hide comparison' : 'Show comparison'}</button></div></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="Remove from comparison">×</button></div><dl><div><dt>Starting position</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>Planned buys / sells</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>Total fees</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>Final quantity</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>Final average</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>Market value</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>Realized P/L</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>Unrealized P/L</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>Break-even</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>Maximum cash required</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">Clear comparison</button>` : '<div class="empty-state">Select up to four active scenarios to compare their arithmetic outcomes.</div>'}</div></section>`;
+  return `<section id="scenario-comparison" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('compare')}</span><h2>${t('upToFourScenarios')}</h2></div><div class="heading-actions">${contextualHelpLink('scenario-comparison')}<button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? t('hideComparison') : t('showComparison')}</button></div></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="${t('removeFromComparison')}">×</button></div><dl><div><dt>${t('startingPosition')}</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>${t('plannedBuysSells')}</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>${t('totalFees')}</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>${t('finalQuantity')}</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>${t('finalAverage')}</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('marketValue')}</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>${t('unrealizedProfitLoss')}</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>${t('breakEven')}</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>${t('maximumCapitalRequirement')}</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">${t('clearComparison')}</button>` : `<div class="empty-state">${t('comparisonEmpty')}</div>`}</div></section>`;
 }
 
 function dateStamp(): string {
@@ -1148,7 +1155,7 @@ function exportBackup(scope: 'all' | 'active'): void {
   const backup = createBackup(positions as unknown as BackupPosition[], scope === 'all' ? store.activeHoldingId : undefined, scope, undefined, scenarios as unknown as BackupPosition[], scope === 'all' ? store.comparisonScenarioIds : store.comparisonScenarioIds.filter((id) => scenarios.some((scenario) => scenario.id === id)));
   const prefix = scope === 'active' && holding.ticker ? holding.ticker.replace(/[^A-Z0-9._-]/gi, '').slice(0, 24) : 'average-price-planner';
   downloadText(`${prefix}-backup-${dateStamp()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
-  notice = `Exported ${positions.length} position${positions.length === 1 ? '' : 's'} and ${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} as a browser-local backup.`;
+  notice = t('exportedBackup', { positions: positions.length, scenarios: scenarios.length });
   render();
 }
 
@@ -1174,13 +1181,13 @@ function exportPlanCsv(): void {
   }));
   const prefix = (holding.ticker || 'position').replace(/[^A-Z0-9._-]/gi, '').slice(0, 24);
   downloadText(`${prefix}-plan-${dateStamp()}.csv`, planCsv(rows), 'text/csv;charset=utf-8');
-  notice = `Exported ${rows.length} planned transaction${rows.length === 1 ? '' : 's'} as CSV.`;
+  notice = t('exportedPlanCsv', { rows: rows.length });
   render();
 }
 
 function applyPendingImport(mode: 'merge' | 'replace'): void {
   if (!pendingImport) return;
-  if (mode === 'replace' && !window.confirm('Replace all current browser-local positions with this backup? This cannot be undone unless you exported a backup first.')) return;
+  if (mode === 'replace' && !window.confirm(t('confirmReplaceImport'))) return;
   const imported = pendingImport.positions.map((position) => normalizeHolding(position as Partial<HoldingState>));
   const importedScenarios = pendingImport.scenarios.map((scenario) => normalizeScenario(scenario, imported[0]?.id ?? activeHolding().id)).filter((scenario): scenario is Scenario => scenario !== null);
   if (mode === 'merge') {
@@ -1210,25 +1217,25 @@ function applyPendingImport(mode: 'merge' | 'replace'): void {
   const transactionCount = imported.reduce((total, holding) => total + holding.transactions.length, 0);
   pendingImport = null;
   saveStore();
-  notice = `Imported ${imported.length} position${imported.length === 1 ? '' : 's'}, ${transactionCount} plan transaction${transactionCount === 1 ? '' : 's'}, and ${importedScenarios.length} scenario${importedScenarios.length === 1 ? '' : 's'}.`;
+  notice = t('importedData', { positions: imported.length, transactions: transactionCount, scenarios: importedScenarios.length });
   render();
 }
 
 function transactionPlan(results: TransactionResult[], holding: HoldingState): string {
   if (holding.transactions.length === 0) {
-    return `<div class="empty-state">No planned transactions yet. Test a buy or sale above, then add it here.</div>`;
+    return `<div class="empty-state">${t('noPlannedTransactions')}</div>`;
   }
 
   const transactionCards = results.map((result, index) => {
     const resultText = !result.valid
-      ? result.error ?? 'Invalid transaction'
+      ? t('invalidTransaction')
       : result.type === 'sell'
-        ? `${result.realizedProfitLoss >= 0 ? 'Gain' : 'Loss'} ${formatCurrency(Math.abs(result.realizedProfitLoss), holding)}`
+        ? `${result.realizedProfitLoss >= 0 ? t('gain') : t('loss')} ${formatCurrency(Math.abs(result.realizedProfitLoss), holding)}`
         : result.reduction > 0
-          ? `Average −${formatCurrency(result.reduction, holding)}`
+          ? t('averageReduced', { amount: formatCurrency(result.reduction, holding) })
           : result.averageChange > 0
-            ? `Average +${formatCurrency(result.averageChange, holding)}`
-            : 'Average unchanged';
+            ? t('averageRaised', { amount: formatCurrency(result.averageChange, holding) })
+            : t('averageUnchanged');
     const resultClass = !result.valid
       ? 'negative'
       : result.type === 'sell'
@@ -1237,18 +1244,18 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
     return `
       <article class="transaction-card ${result.valid ? '' : 'invalid-row'}">
         <div class="transaction-card-heading">
-          <span class="action-tag ${result.type}">${result.type === 'buy' ? 'Buy' : 'Sell'}</span>
-          <button class="icon-button" data-remove-mobile="${result.id}" aria-label="Remove transaction ${index + 1}">×</button>
+          <span class="action-tag ${result.type}">${result.type === 'buy' ? t('buy') : t('sell')}</span>
+          <button class="icon-button" data-remove-mobile="${result.id}" aria-label="${t('removeTransaction', { number: index + 1 })}">×</button>
         </div>
         <dl>
-          <div><dt>Price</dt><dd>${formatCurrency(result.price, holding)}</dd></div>
-          <div><dt>Shares</dt><dd>${formatQuantity(result.shares, holding)}</dd></div>
-          <div><dt>Gross</dt><dd>${formatCurrency(result.grossAmount, holding)}</dd></div>
-          <div><dt>Fee</dt><dd>${formatCurrency(result.feeAmount, holding)} (${feeLabel({ mode: result.feeMode ?? 'percent', value: result.feeValue ?? 0 }, holding)})</dd></div>
-          <div><dt>${result.type === 'buy' ? 'Total paid' : 'Net received'}</dt><dd>${formatCurrency(result.type === 'buy' ? result.totalAmount : result.netAmount, holding)}</dd></div>
-          <div><dt>Shares after</dt><dd>${formatQuantity(result.sharesAfter, holding)}</dd></div>
-          <div><dt>Average after</dt><dd>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter, holding) : 'Closed'}</dd></div>
-          <div><dt>Result</dt><dd class="${resultClass}">${escapeHtml(resultText)}</dd></div>
+          <div><dt>${t('price')}</dt><dd>${formatCurrency(result.price, holding)}</dd></div>
+          <div><dt>${t('shares')}</dt><dd>${formatQuantity(result.shares, holding)}</dd></div>
+          <div><dt>${t('gross')}</dt><dd>${formatCurrency(result.grossAmount, holding)}</dd></div>
+          <div><dt>${t('fee')}</dt><dd>${formatCurrency(result.feeAmount, holding)} (${feeLabel({ mode: result.feeMode ?? 'percent', value: result.feeValue ?? 0 }, holding)})</dd></div>
+          <div><dt>${result.type === 'buy' ? t('totalPaid') : t('netReceived')}</dt><dd>${formatCurrency(result.type === 'buy' ? result.totalAmount : result.netAmount, holding)}</dd></div>
+          <div><dt>${t('sharesLeft')}</dt><dd>${formatQuantity(result.sharesAfter, holding)}</dd></div>
+          <div><dt>${t('averageAfter')}</dt><dd>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter, holding) : t('closed')}</dd></div>
+          <div><dt>${t('result')}</dt><dd class="${resultClass}">${escapeHtml(resultText)}</dd></div>
         </dl>
       </article>
     `;
@@ -1260,15 +1267,15 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
         <thead>
           <tr>
             <th>#</th>
-            <th>Action</th>
-            <th>Price</th>
-            <th>Shares</th>
-            <th>Gross</th>
-            <th>Fee</th>
-            <th>Total / Net</th>
-            <th>Shares after</th>
-            <th>Average after</th>
-            <th>Result</th>
+            <th>${t('action')}</th>
+            <th>${t('price')}</th>
+            <th>${t('shares')}</th>
+            <th>${t('gross')}</th>
+            <th>${t('fee')}</th>
+            <th>${t('totalNet')}</th>
+            <th>${t('sharesLeft')}</th>
+            <th>${t('averageAfter')}</th>
+            <th>${t('result')}</th>
             <th></th>
           </tr>
         </thead>
@@ -1278,7 +1285,7 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
               return `
                 <tr class="invalid-row">
                   <td>${index + 1}</td>
-                  <td>${result.type === 'buy' ? 'Buy' : 'Sell'}</td>
+                  <td>${result.type === 'buy' ? t('buy') : t('sell')}</td>
                   <td>${formatCurrency(result.price)}</td>
                   <td>${formatQuantity(result.shares)}</td>
                   <td>—</td>
@@ -1286,19 +1293,19 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
                   <td>—</td>
                   <td>${formatQuantity(result.sharesAfter)}</td>
                   <td>${formatCurrency(result.averageAfter)}</td>
-                  <td class="negative">${escapeHtml(result.error ?? 'Invalid')}</td>
-                  <td><button class="icon-button" data-remove="${result.id}" aria-label="Remove transaction">×</button></td>
+                  <td class="negative">${t('invalidTransaction')}</td>
+                  <td><button class="icon-button" data-remove="${result.id}" aria-label="${t('removeTransactionShort')}">×</button></td>
                 </tr>
               `;
             }
 
             const resultText = result.type === 'sell'
-              ? `${result.realizedProfitLoss >= 0 ? 'Gain' : 'Loss'} ${formatCurrency(Math.abs(result.realizedProfitLoss))}`
+              ? `${result.realizedProfitLoss >= 0 ? t('gain') : t('loss')} ${formatCurrency(Math.abs(result.realizedProfitLoss))}`
               : result.reduction > 0
-                ? `Average −${formatCurrency(result.reduction)}`
+                ? t('averageReduced', { amount: formatCurrency(result.reduction) })
                 : result.averageChange > 0
-                  ? `Average +${formatCurrency(result.averageChange)}`
-                  : 'Average unchanged';
+                  ? t('averageRaised', { amount: formatCurrency(result.averageChange) })
+                  : t('averageUnchanged');
             const resultClass = result.type === 'sell'
               ? result.realizedProfitLoss >= 0 ? 'positive' : 'negative'
               : result.reduction > 0 ? 'positive' : result.averageChange > 0 ? 'negative' : '';
@@ -1306,23 +1313,23 @@ function transactionPlan(results: TransactionResult[], holding: HoldingState): s
             return `
               <tr>
                 <td>${index + 1}</td>
-                <td><span class="action-tag ${result.type}">${result.type === 'buy' ? 'Buy' : 'Sell'}</span></td>
+                <td><span class="action-tag ${result.type}">${result.type === 'buy' ? t('buy') : t('sell')}</span></td>
                 <td>${formatCurrency(result.price)}</td>
                 <td>${formatQuantity(result.shares)}</td>
               <td>${formatCurrency(result.grossAmount)}</td>
               <td>${formatCurrency(result.feeAmount)} (${feeLabel({ mode: result.feeMode ?? 'percent', value: result.feeValue ?? 0 })})</td>
               <td>${formatCurrency(result.type === 'buy' ? result.totalAmount : result.netAmount)}</td>
                 <td>${formatQuantity(result.sharesAfter)}</td>
-                <td>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'Closed'}</td>
+                <td>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : t('closed')}</td>
                 <td class="${resultClass}">${resultText}</td>
-                <td><button class="icon-button" data-remove="${result.id}" aria-label="Remove transaction">×</button></td>
+                <td><button class="icon-button" data-remove="${result.id}" aria-label="${t('removeTransactionShort')}">×</button></td>
               </tr>
             `;
           }).join('')}
         </tbody>
       </table>
     </div>
-    <div class="transaction-cards" aria-label="Planned transactions">${transactionCards}</div>
+    <div class="transaction-cards" aria-label="${t('futureTransactions')}">${transactionCards}</div>
   `;
 }
 
@@ -1347,7 +1354,7 @@ function field(
 function render(): void {
   const helpRoute = helpRouteFromHash();
   if (helpRoute) {
-    renderHelp(app, helpRoute, { backToCalculator });
+    renderHelp(app, helpRoute, { backToCalculator, changeLocale });
     return;
   }
   const holding = activeHolding();
@@ -1355,7 +1362,7 @@ function render(): void {
   const analyzablePosition = position && isFinitePositive(position.shares) && isFinitePositive(position.averagePrice)
     ? position
     : null;
-  const tickerLabel = escapeHtml(holding.ticker || 'this position');
+  const tickerLabel = escapeHtml(holding.ticker || t('thisPosition'));
   const isBuy = holding.action === 'buy';
   const transactionFee = activeFee(holding);
   const validTransaction = Boolean(
@@ -1372,11 +1379,11 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner <span class="release-tag">v1.8.1</span></h1>
-          <p>Compare future buys and sales for each holding</p>
+          <h1>${t('documentTitle')} <span class="release-tag">v1.9.0</span></h1>
+          <p>${t('appTagline')}</p>
         </div>
       </div>
-      <div class="privacy-badge"><span></span> Saved only in this browser</div>
+      <div class="header-actions"><div class="locale-control" role="group" aria-label="${t('language')}"><button type="button" data-locale="en" class="${getLocale() === 'en' ? 'active' : ''}">${t('english')}</button><button type="button" data-locale="ru" class="${getLocale() === 'ru' ? 'active' : ''}">${t('russian')}</button></div><div class="privacy-badge"><span></span> ${t('savedOnlyHere')}</div></div>
     </header>
 
     <main class="layout">
@@ -1384,21 +1391,21 @@ function render(): void {
         <section class="panel positions-panel">
           <div class="section-heading compact">
             <div>
-              <span class="eyebrow">Saved positions</span>
-              <h2>Switch holdings</h2>
+              <span class="eyebrow">${t('positions')}</span>
+              <h2>${t('switchHoldings')}</h2>
             </div>
           </div>
           <label class="field">
-            <span>Current holding</span>
+            <span>${t('currentHolding')}</span>
             <select id="holdingSelect">
               ${store.holdings.map((item, index) => `<option value="${item.id}" ${item.id === holding.id ? 'selected' : ''}>${escapeHtml(holdingName(item, index))}</option>`).join('')}
             </select>
           </label>
           <div class="button-row">
-            <button id="newHolding" class="secondary-button">New position</button>
-            <button id="deleteHolding" class="text-button danger-text">Delete</button>
+            <button id="newHolding" class="secondary-button">${t('newPosition')}</button>
+            <button id="deleteHolding" class="text-button danger-text">${t('delete')}</button>
           </div>
-          <p class="helper-text">Each ticker keeps its own holding, settings, and plan on this browser.</p>
+          <p class="helper-text">${t('eachTickerOwns')}</p>
         </section>
 
         <section id="position" class="panel holding-panel">
@@ -1406,42 +1413,42 @@ function render(): void {
           <div id="holdingEditor" class="holding-editor ${holdingEditorExpanded ? 'is-expanded' : ''}">
           <div class="section-heading">
             <div>
-              <span class="eyebrow">Current holding</span>
-              <h2>What you own now</h2>
+              <span class="eyebrow">${t('currentHolding')}</span>
+              <h2>${t('whatYouOwnNow')}</h2>
             </div>
-            <div class="heading-actions">${contextualHelpLink('positions')}<button id="resetHolding" class="text-button">Reset</button></div>
+            <div class="heading-actions">${contextualHelpLink('positions')}<button id="resetHolding" class="text-button">${t('reset')}</button></div>
           </div>
 
           <div class="field-grid two">
-            ${field('ticker', 'Ticker / name', holding.ticker, 'text', 'SOXL')}
-            ${field('currency', 'Currency', holding.currency, 'text', 'USD')}
-            ${field('baseShares', 'Shares owned', holding.baseShares, 'number', '48.5')}
-            ${field('baseAverage', 'Average buy price', holding.baseAverage, 'number', '189')}
-            ${field('currentMarketPrice', 'Current market price', holding.currentMarketPrice, 'number', '50')}
+            ${field('ticker', t('tickerName'), holding.ticker, 'text', 'SOXL')}
+            ${field('currency', t('currency'), holding.currency, 'text', 'USD')}
+            ${field('baseShares', t('sharesOwned'), holding.baseShares, 'number', '48.5')}
+            ${field('baseAverage', t('averageBuyPrice'), holding.baseAverage, 'number', '189')}
+            ${field('currentMarketPrice', t('currentMarketPrice'), holding.currentMarketPrice, 'number', '50')}
           </div>
 
           <div class="purchase-settings">
-            <span class="settings-title">Purchase settings</span>
+            <span class="settings-title">${t('purchaseSettings')}</span>
             <div class="field-grid two">
-              ${field('shareStep', 'Smallest share amount', holding.shareStep, 'number', '1', 'any')}
-              ${field('budget', 'Budget limit', holding.budget, 'number', '4000', 'any')}
+              ${field('shareStep', t('smallestShareAmount'), holding.shareStep, 'number', '1', 'any')}
+              ${field('budget', t('budgetLimit'), holding.budget, 'number', '4000', 'any')}
             </div>
             <label class="range-field">
-              <span><b>Minimum effect of the next share</b><output id="efficiencyFloorValue">${percent(holding.efficiencyFloor * 100, 0)}</output></span>
+              <span><b>${t('minimumNextShareEffect')}</b><output id="efficiencyFloorValue">${percent(holding.efficiencyFloor * 100, 0)}</output></span>
               <input id="efficiencyFloor" type="range" min="5" max="100" step="5" value="${holding.efficiencyFloor * 100}" />
-              <small>Choose how much effect the next additional share should still have compared with the first additional share.</small>
+              <small>${t('nextShareHelp')}</small>
             </label>
             <label class="range-field">
-              <span><b>Target share of the full-budget improvement</b><output id="budgetBenefitTargetValue">${percent(holding.budgetBenefitTarget * 100, 0)}</output></span>
+              <span><b>${t('fullBudgetTarget')}</b><output id="budgetBenefitTargetValue">${percent(holding.budgetBenefitTarget * 100, 0)}</output></span>
               <input id="budgetBenefitTarget" type="range" min="5" max="100" step="5" value="${holding.budgetBenefitTarget * 100}" />
-              <small>Find the smallest purchase that produces at least this much of the average reduction available from spending the complete budget.</small>
+              <small>${t('fullBudgetHelp')}</small>
             </label>
           </div>
           </div>
         </section>
         <section class="panel help-entry-card">
-          <div><span class="eyebrow">Help &amp; guide</span><h2>Help &amp; guide</h2><p class="helper-text">Learn how each calculator section works.</p></div>
-          <button id="openHelp" class="text-button" aria-label="Open Help and guide">? Open help</button>
+          <div><span class="eyebrow">${t('helpGuide')}</span><h2>${t('helpGuide')}</h2><p class="helper-text">${t('helpGuideDescription')}</p></div>
+          <button id="openHelp" class="text-button" aria-label="${t('openHelp')}">? ${t('openHelp')}</button>
         </section>
       </aside>
 
@@ -1451,35 +1458,35 @@ function render(): void {
         <section id="transaction" class="panel hero-panel">
           <div class="section-heading action-heading">
             <div>
-              <span class="eyebrow">Test a transaction</span>
-              <h2>${isBuy ? `What if you buy more ${tickerLabel}?` : `What if you sell some ${tickerLabel}?`}</h2>
+              <span class="eyebrow">${t('testTransaction')}</span>
+              <h2>${isBuy ? t('whatIfBuy', { position: tickerLabel }) : t('whatIfSell', { position: tickerLabel })}</h2>
             </div>
-            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${formatQuantity(analyzablePosition.shares)} shares @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}</div>
+            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${formatQuantity(analyzablePosition.shares)} ${t('sharesSuffix')} @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}</div>
           </div>
 
-          <div class="segmented-control" aria-label="Transaction type">
-            <button type="button" data-action="buy" class="${isBuy ? 'active' : ''}">Buy</button>
-            <button type="button" data-action="sell" class="${!isBuy ? 'active' : ''}">Sell</button>
+          <div class="segmented-control" aria-label="${t('transactionType')}">
+            <button type="button" data-action="buy" class="${isBuy ? 'active' : ''}">${t('buy')}</button>
+            <button type="button" data-action="sell" class="${!isBuy ? 'active' : ''}">${t('sell')}</button>
           </div>
 
           <div class="transaction-entry">
-            ${field('transactionPrice', `${isBuy ? 'Buy' : 'Sell'} price per share`, holding.transactionPrice, 'number', '147', 'any', `${isBuy ? 'Buy' : 'Sell'} price`)}
-            ${field('transactionShares', `Shares to ${isBuy ? 'buy' : 'sell'}`, holding.transactionShares, 'number', '4', 'any', 'Shares')}
-            <div class="fee-controls" aria-label="${isBuy ? 'Buy' : 'Sell'} transaction fee">
-              <span class="fee-controls-label">Fee</span>
-              <div class="segmented-control fee-mode-control" aria-label="Fee mode">
-                <button type="button" data-fee-mode="percent" class="${transactionFee.mode === 'percent' ? 'active' : ''}">Percent</button>
-                <button type="button" data-fee-mode="fixed" class="${transactionFee.mode === 'fixed' ? 'active' : ''}">Fixed</button>
+            ${field('transactionPrice', isBuy ? t('buyPricePerShare') : t('sellPricePerShare'), holding.transactionPrice, 'number', '147', 'any', t('price'))}
+            ${field('transactionShares', isBuy ? t('sharesToBuy') : t('sharesToSell'), holding.transactionShares, 'number', '4', 'any', t('shares'))}
+            <div class="fee-controls" aria-label="${t('fee')}">
+              <span class="fee-controls-label">${t('fee')}</span>
+              <div class="segmented-control fee-mode-control" aria-label="${t('feeMode')}">
+                <button type="button" data-fee-mode="percent" class="${transactionFee.mode === 'percent' ? 'active' : ''}">${t('percent')}</button>
+                <button type="button" data-fee-mode="fixed" class="${transactionFee.mode === 'fixed' ? 'active' : ''}">${t('fixed')}</button>
               </div>
-              ${field('transactionFee', transactionFee.mode === 'percent' ? 'Fee percent' : 'Fixed fee', transactionFee.value, 'number', '0', '0.01', transactionFee.mode === 'percent' ? 'Fee %' : 'Fee')}
-              <span class="fee-preview">${feeLabel(transactionFee)} · ${isFinitePositive(holding.transactionPrice) && isFinitePositive(holding.transactionShares) ? `Fee ${formatCurrency(transactionFee.mode === 'percent' ? holding.transactionPrice * holding.transactionShares * transactionFee.value / 100 : transactionFee.value)}` : 'Enter price and shares'}</span>
+              ${field('transactionFee', transactionFee.mode === 'percent' ? t('feePercent') : t('fixedFee'), transactionFee.value, 'number', '0', '0.01', t('fee'))}
+              <span class="fee-preview">${feeLabel(transactionFee)} · ${isFinitePositive(holding.transactionPrice) && isFinitePositive(holding.transactionShares) ? `${t('fee')} ${formatCurrency(transactionFee.mode === 'percent' ? holding.transactionPrice * holding.transactionShares * transactionFee.value / 100 : transactionFee.value)}` : t('enterPriceShares')}</span>
             </div>
-            <button id="addTransaction" class="primary-button" ${validTransaction ? '' : 'disabled'}>Add ${isBuy ? 'buy' : 'sale'} to plan</button>
+            <button id="addTransaction" class="primary-button" ${validTransaction ? '' : 'disabled'}>${isBuy ? t('addBuyToPlan') : t('addSaleToPlan')}</button>
           </div>
 
           ${analyzablePosition
             ? `${transactionSummary(analyzablePosition, holding)}${resultStrip(analyzablePosition, holding)}`
-            : `<div class="empty-state">Enter your current shares and average price before testing a transaction.</div>`}
+            : `<div class="empty-state">${t('needPosition')}</div>`}
         </section>
 
         ${marketSnapshotPanel(analyzablePosition, holding)}
@@ -1496,8 +1503,8 @@ function render(): void {
           <section id="buying-guide" class="panel">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Buying guide</span>
-                <h2>Useful purchase sizes</h2>
+                <span class="eyebrow">${t('buyingGuide')}</span>
+                <h2>${t('usefulPurchaseSizes')}</h2>
               </div>${contextualHelpLink('buying-guide')}
             </div>
             ${optimizerCards(analyzablePosition, holding)}
@@ -1507,13 +1514,13 @@ function render(): void {
           <section class="panel">
             <div class="section-heading">
               <div>
-                <span class="eyebrow">Compare options</span>
-                <h2>Different buy sizes</h2>
+                <span class="eyebrow">${t('compareOptions')}</span>
+                <h2>${t('differentBuySizes')}</h2>
               </div>${contextualHelpLink('buying-guide')}
             </div>
             ${scenarioTable(analyzablePosition, holding)}
             ${isFinitePositive(holding.transactionPrice) && holding.transactionPrice < analyzablePosition.averagePrice
-              ? `<p class="simple-note table-note"><strong>Available average reduction reached</strong> shows how much of the distance from the current average toward the buy price has been covered. <strong>Effect of one more share</strong> shows how strongly the next additional share would lower the average compared with the first additional share.</p>`
+              ? `<p class="simple-note table-note">${t('averageReductionHelp')}</p>`
               : ''}
           </section>
         ` : ''}
@@ -1521,17 +1528,17 @@ function render(): void {
         <section id="future-plan" class="panel">
           <div class="section-heading">
             <div>
-              <span class="eyebrow">Future transactions</span>
-              <h2>Plan for ${tickerLabel}</h2>
+              <span class="eyebrow">${t('futureTransactions')}</span>
+              <h2>${t('planFor', { position: tickerLabel })}</h2>
             </div>
-            <div class="heading-actions">${contextualHelpLink('future-plan')}${holding.transactions.length ? `<button id="clearPlan" class="text-button">Clear plan</button>` : ''}</div>
+            <div class="heading-actions">${contextualHelpLink('future-plan')}${holding.transactions.length ? `<button id="clearPlan" class="text-button">${t('clearPlan')}</button>` : ''}</div>
           </div>
           ${transactionPlan(results, holding)}
         </section>
 
         ${dataManagementPanel(holding)}
 
-        <p class="disclaimer">This app performs arithmetic and planning only; it does not assess investment quality. Calculations include the transaction fees you configure, but remain estimates before taxes. Selling does not change average cost under the average-cost method; it realizes a gain or loss on the shares sold.</p>
+        <p class="disclaimer">${t('planningDisclaimer')}</p>
       </section>
     </main>
   `;
@@ -1543,6 +1550,7 @@ function render(): void {
 
 function wireEvents(): void {
   document.querySelector<HTMLButtonElement>('#openHelp')?.addEventListener('click', () => openHelp());
+  document.querySelectorAll<HTMLButtonElement>('[data-locale]').forEach((button) => button.addEventListener('click', () => changeLocale(button.dataset.locale === 'ru' ? 'ru' : 'en')));
   document.querySelectorAll<HTMLButtonElement>('[data-help-open]').forEach((button) => button.addEventListener('click', () => {
     const sectionId = button.closest<HTMLElement>('[id]')?.id ?? '';
     openHelp(button.dataset.helpOpen ?? 'home', sectionId);
@@ -1630,7 +1638,7 @@ function wireEvents(): void {
   ['targetAverage', 'targetBuyPrice', 'targetSellShares', 'targetSellValue'].forEach((id) => {
     document.querySelector<HTMLInputElement>(`#${id}`)?.addEventListener('input', (event) => {
       const holding = activeHolding();
-      const value = Number((event.currentTarget as HTMLInputElement).value);
+      const value = parseLocalizedDecimal((event.currentTarget as HTMLInputElement).value) ?? 0;
       if (id === 'targetAverage') holding.targetAverage = value;
       if (id === 'targetBuyPrice') holding.targetBuyPrice = value;
       if (id === 'targetSellShares') holding.targetSellShares = value;
@@ -1672,12 +1680,12 @@ function wireEvents(): void {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (!file) return;
     try {
-      if (file.size > 5 * 1024 * 1024) throw new Error('Import rejected: backup files must be 5 MB or smaller.');
+      if (file.size > 5 * 1024 * 1024) throw new Error(t('importTooLarge'));
       pendingImport = parseBackupJson(await file.text());
-      notice = 'Backup checked. Review the preview before applying it.';
+      notice = t('backupChecked');
     } catch (error) {
       pendingImport = null;
-      notice = error instanceof Error ? error.message : 'Import rejected: the selected backup could not be read.';
+      notice = error instanceof Error ? error.message : t('importRejected');
     }
     render();
   });
@@ -1696,7 +1704,7 @@ function wireEvents(): void {
     });
     store.holdings.push(newHolding);
     store.activeHoldingId = newHolding.id;
-    notice = 'New position created. Enter its ticker and current holding.';
+    notice = t('newPositionCreated');
     saveStore();
     render();
   });
@@ -1716,11 +1724,11 @@ function wireEvents(): void {
       });
       store.holdings.push(blankHolding);
       store.activeHoldingId = blankHolding.id;
-      notice = 'Position deleted. Enter a ticker to start a new one.';
+      notice = t('positionDeletedNew');
     } else {
       const nextIndex = Math.max(0, Math.min(index, store.holdings.length - 1));
       store.activeHoldingId = store.holdings[nextIndex]!.id;
-      notice = 'Position deleted from this browser.';
+      notice = t('positionDeleted');
     }
 
     saveStore();
@@ -1732,23 +1740,23 @@ function wireEvents(): void {
     const holding = activeHolding();
     const { position } = effectivePosition(holding);
     if (!position || !isFinitePositive(position.shares) || !isFinitePositive(position.averagePrice)) {
-      notice = 'Enter a valid current holding first.';
+      notice = t('validHoldingFirst');
       render();
       return;
     }
     if (!isFinitePositive(holding.transactionPrice) || !isFinitePositive(holding.transactionShares)) {
-      notice = 'Enter a price and number of shares first.';
+      notice = t('priceAndSharesFirst');
       render();
       return;
     }
     const fee = activeFee(holding);
     if (!Number.isFinite(fee.value) || fee.value < 0) {
-      notice = 'Enter a fee of zero or greater.';
+      notice = t('enterNonNegativeFee');
       render();
       return;
     }
     if (holding.action === 'sell' && holding.transactionShares > position.shares) {
-      notice = `You cannot sell more than ${formatQuantity(position.shares)} shares.`;
+      notice = t('cannotSellMore', { shares: formatQuantity(position.shares) });
       render();
       return;
     }
@@ -1766,14 +1774,14 @@ function wireEvents(): void {
       createdOrder: holding.transactions.length,
     });
     holding.transactionShares = 0;
-    notice = `${holding.action === 'buy' ? 'Buy' : 'Sale'} added to the plan. Enter a new share amount for the next transaction.`;
+    notice = t('transactionAdded', { action: holding.action === 'buy' ? t('buy') : t('sale') });
     saveStore();
     render();
   });
 
   document.querySelector<HTMLButtonElement>('#clearPlan')?.addEventListener('click', () => {
     activeHolding().transactions = [];
-    notice = 'Plan cleared.';
+    notice = t('planCleared');
     saveStore();
     render();
   });
@@ -1783,21 +1791,21 @@ function wireEvents(): void {
     render();
   });
   document.querySelector<HTMLButtonElement>('#newScenario')?.addEventListener('click', () => {
-    if (createScenarioFromHolding()) notice = 'New scenario created from the current position.';
+    if (createScenarioFromHolding()) notice = t('scenarioCreated');
     render();
   });
   document.querySelector<HTMLButtonElement>('#savePlanScenario')?.addEventListener('click', () => {
-    if (createScenarioFromHolding(`${activeHolding().ticker || 'Position'} saved plan`)) notice = 'Current plan saved as an independent scenario.';
+    if (createScenarioFromHolding(t('savedPlanName', { position: activeHolding().ticker || t('positionLabel') }))) notice = t('scenarioSaved');
     render();
   });
   document.querySelectorAll<HTMLButtonElement>('[data-load-scenario]').forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.loadScenario;
     if (!id || !store.scenarios.some((scenario) => scenario.id === id)) return;
-    if (!window.confirm('Load this scenario into the planner? Your saved current position will not be changed.')) return;
+    if (!window.confirm(t('confirmLoadScenario'))) return;
     loadedScenarioId = id;
     scenarioPanelExpanded = true;
     pendingApplicationScenarioId = null;
-    notice = 'Scenario loaded into the planner workspace.';
+    notice = t('scenarioLoaded');
     render();
   }));
   document.querySelectorAll<HTMLButtonElement>('[data-duplicate-scenario]').forEach((button) => button.addEventListener('click', () => {
@@ -1805,32 +1813,32 @@ function wireEvents(): void {
     if (!source) return;
     const timestamp = new Date().toISOString();
     const copy: Scenario = JSON.parse(JSON.stringify(source)) as Scenario;
-    copy.id = createId(); copy.name = `${source.name} copy`; copy.status = 'draft'; copy.createdAt = timestamp; copy.updatedAt = timestamp;
+    copy.id = createId(); copy.name = t('copiedScenarioName', { name: source.name }); copy.status = 'draft'; copy.createdAt = timestamp; copy.updatedAt = timestamp;
     copy.transactions = copy.transactions.map((transaction, index) => ({ ...transaction, id: createId(), appliedAt: undefined, createdAt: timestamp, updatedAt: timestamp, createdOrder: index }));
     copy.ladder = copy.ladder ? { ...copy.ladder, levels: copy.ladder.levels.map((level) => ({ ...level, id: createId() })) } : null;
-    store.scenarios.push(copy); loadedScenarioId = copy.id; scenarioPanelExpanded = true; saveStore(); notice = 'Scenario duplicated.'; render();
+    store.scenarios.push(copy); loadedScenarioId = copy.id; scenarioPanelExpanded = true; saveStore(); notice = t('scenarioDuplicated'); render();
   }));
   document.querySelectorAll<HTMLButtonElement>('[data-scenario-archive]').forEach((button) => button.addEventListener('click', () => {
     const scenario = store.scenarios.find((item) => item.id === button.dataset.scenarioArchive);
     if (!scenario) return;
     scenario.status = scenario.status === 'archived' ? 'draft' : 'archived';
     store.comparisonScenarioIds = store.comparisonScenarioIds.filter((id) => id !== scenario.id);
-    touchScenario(scenario); notice = scenario.status === 'archived' ? 'Scenario archived.' : 'Scenario restored as a draft.'; render();
+    touchScenario(scenario); notice = scenario.status === 'archived' ? t('scenarioArchived') : t('scenarioRestored'); render();
   }));
   document.querySelectorAll<HTMLButtonElement>('[data-delete-scenario]').forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.deleteScenario;
-    if (!id || !window.confirm('Delete this saved scenario? This cannot be undone.')) return;
+    if (!id || !window.confirm(t('confirmDeleteScenario'))) return;
     store.scenarios = store.scenarios.filter((scenario) => scenario.id !== id);
     store.comparisonScenarioIds = store.comparisonScenarioIds.filter((item) => item !== id);
     if (loadedScenarioId === id) loadedScenarioId = null;
-    saveStore(); notice = 'Scenario deleted.'; render();
+    saveStore(); notice = t('scenarioDeleted'); render();
   }));
   document.querySelectorAll<HTMLInputElement>('[data-compare-scenario]').forEach((input) => input.addEventListener('change', () => {
     const id = input.dataset.compareScenario;
     const scenario = store.scenarios.find((item) => item.id === id);
     if (!id || !scenario || scenario.status === 'archived') return;
     if (input.checked) {
-      if (store.comparisonScenarioIds.length >= 4) { notice = 'Comparison is limited to four non-archived scenarios.'; input.checked = false; render(); return; }
+      if (store.comparisonScenarioIds.length >= 4) { notice = t('comparisonLimit'); input.checked = false; render(); return; }
       store.comparisonScenarioIds = [...store.comparisonScenarioIds.filter((item) => item !== id), id];
       comparisonExpanded = true;
     } else store.comparisonScenarioIds = store.comparisonScenarioIds.filter((item) => item !== id);
@@ -1874,14 +1882,14 @@ function wireEvents(): void {
     document.querySelector<HTMLButtonElement>('#generateLadder')?.addEventListener('click', () => {
       try {
         const generated = generateDcaLadder({ ...ladder, distribution: ladder.distribution === 'custom' ? 'equalShares' : ladder.distribution, makeId: createId });
-        if (generated.error) throw new Error(generated.error);
+        if (generated.error) { notice = plannerMessage(generated.errorCode); render(); return; }
         scenario.ladder = { ...generated.ladder, distribution: ladder.distribution };
-        syncLadderTransactions(scenario); touchScenario(scenario); notice = 'Fee-aware ladder generated. Fine-tune rows before execution.';
-      } catch (error) { notice = error instanceof Error ? error.message : 'Could not generate this ladder.'; }
+        syncLadderTransactions(scenario); touchScenario(scenario); notice = t('ladderGenerated');
+      } catch (error) { notice = error instanceof Error ? error.message : t('ladderGenerationFailed'); }
       render();
     });
     document.querySelector<HTMLButtonElement>('#addLadderLevel')?.addEventListener('click', () => { const last = ladder.levels.at(-1); ladder.levels.push({ id: createId(), price: last?.price ?? ladder.endPrice, shares: last?.shares ?? ladder.sharePrecision, feeMode: ladder.feeMode, feeValue: activeLadderFee(ladder).value }); ladder.levelCount = Math.min(20, ladder.levels.length); syncLadderTransactions(scenario); touchScenario(scenario); render(); });
-    document.querySelector<HTMLButtonElement>('#clearLadder')?.addEventListener('click', () => { scenario.transactions = scenario.transactions.filter((transaction) => !transaction.ladderLevelId); scenario.ladder = null; touchScenario(scenario); notice = 'Ladder cleared; other scenario transactions were kept.'; render(); });
+    document.querySelector<HTMLButtonElement>('#clearLadder')?.addEventListener('click', () => { scenario.transactions = scenario.transactions.filter((transaction) => !transaction.ladderLevelId); scenario.ladder = null; touchScenario(scenario); notice = t('ladderCleared'); render(); });
     const changeLevel = (selector: string, apply: (level: DcaLadder['levels'][number], value: number) => void): void => document.querySelectorAll<HTMLInputElement>(selector).forEach((input) => input.addEventListener('change', () => { const level = ladder.levels.find((item) => item.id === (input.dataset.ladderPrice ?? input.dataset.ladderShares)); if (!level) return; apply(level, nonNegative(input.value)); syncLadderTransactions(scenario); touchScenario(scenario); render(); }));
     changeLevel('[data-ladder-price]', (level, value) => { level.price = value; });
     changeLevel('[data-ladder-shares]', (level, value) => { level.shares = value; });
@@ -1897,18 +1905,18 @@ function wireEvents(): void {
     changeTransaction('[data-broker-label]', (transaction, value) => { transaction.brokerLabel = value; });
     document.querySelectorAll<HTMLButtonElement>('[data-transaction-status]').forEach((button) => button.addEventListener('click', () => { const transaction = scenario.transactions.find((item) => item.id === button.dataset.transactionStatus); if (!transaction) return; transaction.status = button.dataset.status === 'executed' ? 'executed' : button.dataset.status === 'cancelled' ? 'cancelled' : 'planned'; if (transaction.status === 'executed' && !transaction.executionDate) transaction.executionDate = new Date().toISOString().slice(0, 16); touchScenario(scenario); render(); }));
     document.querySelector<HTMLButtonElement>('#resetStressPrices')?.addEventListener('click', () => { scenario.stressPrices = defaultStressPrices(); touchScenario(scenario); render(); });
-    document.querySelector<HTMLButtonElement>('#addStressPrice')?.addEventListener('click', () => { const value = window.prompt('Enter an absolute stress-test price'); if (value === null) return; const price = Number(value); if (!Number.isFinite(price) || price < 0) { notice = 'Enter a price of zero or greater.'; render(); return; } scenario.stressPrices.push({ id: createId(), kind: 'absolute', value: price }); touchScenario(scenario); render(); });
+    document.querySelector<HTMLButtonElement>('#addStressPrice')?.addEventListener('click', () => { const value = window.prompt(t('stressPricePrompt')); if (value === null) return; const price = parseLocalizedDecimal(value); if (price === null || price < 0) { notice = t('nonNegativePrice'); render(); return; } scenario.stressPrices.push({ id: createId(), kind: 'absolute', value: price }); touchScenario(scenario); render(); });
     document.querySelector<HTMLButtonElement>('#toggleStressSort')?.addEventListener('click', () => { stressAscending = !stressAscending; render(); });
     document.querySelectorAll<HTMLButtonElement>('[data-remove-stress]').forEach((button) => button.addEventListener('click', () => { scenario.stressPrices = scenario.stressPrices.filter((entry) => entry.id !== button.dataset.removeStress); touchScenario(scenario); render(); }));
     document.querySelector<HTMLButtonElement>('#toggleReverseSell')?.addEventListener('click', () => { reverseSellExpanded = !reverseSellExpanded; render(); });
     document.querySelectorAll<HTMLButtonElement>('[data-reverse-direction]').forEach((button) => button.addEventListener('click', () => { reverseDirection = button.dataset.reverseDirection === 'shares' ? 'shares' : 'price'; render(); }));
     document.querySelectorAll<HTMLButtonElement>('[data-reverse-mode]').forEach((button) => button.addEventListener('click', () => { const mode = button.dataset.reverseMode; reverseMode = mode === 'return' || mode === 'netProceeds' || mode === 'breakEven' ? mode : 'profit'; render(); }));
-    document.querySelector<HTMLInputElement>('#reverseShares')?.addEventListener('change', (event) => { reverseShares = Number((event.currentTarget as HTMLInputElement).value); render(); });
-    document.querySelector<HTMLInputElement>('#reversePrice')?.addEventListener('change', (event) => { reversePrice = Number((event.currentTarget as HTMLInputElement).value); render(); });
-    document.querySelector<HTMLInputElement>('#reverseTarget')?.addEventListener('change', (event) => { reverseTarget = Number((event.currentTarget as HTMLInputElement).value); render(); });
+    document.querySelector<HTMLInputElement>('#reverseShares')?.addEventListener('change', (event) => { reverseShares = parseLocalizedDecimal((event.currentTarget as HTMLInputElement).value); render(); });
+    document.querySelector<HTMLInputElement>('#reversePrice')?.addEventListener('change', (event) => { reversePrice = parseLocalizedDecimal((event.currentTarget as HTMLInputElement).value); render(); });
+    document.querySelector<HTMLInputElement>('#reverseTarget')?.addEventListener('change', (event) => { reverseTarget = parseLocalizedDecimal((event.currentTarget as HTMLInputElement).value) ?? 0; render(); });
     document.querySelector<HTMLButtonElement>('#previewApplyExecuted')?.addEventListener('click', () => { pendingApplicationScenarioId = scenario.id; render(); });
     document.querySelector<HTMLButtonElement>('#cancelApplyExecuted')?.addEventListener('click', () => { pendingApplicationScenarioId = null; render(); });
-    document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.addEventListener('click', () => { const holding = activeHolding(); const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario); if (!preview.valid || !preview.candidates.length) { notice = preview.error ?? 'There are no valid executed transactions to apply.'; pendingApplicationScenarioId = null; render(); return; } if (!window.confirm(`Apply ${preview.candidates.length} executed transaction(s) to the saved position?`)) return; holding.baseShares = preview.finalPosition.shares; holding.baseAverage = preview.finalPosition.averagePrice; const appliedAt = new Date().toISOString(); const ids = new Set(preview.candidates.map((transaction) => transaction.id)); scenario.transactions.forEach((transaction) => { if (ids.has(transaction.id)) transaction.appliedAt = appliedAt; }); touchScenario(scenario); pendingApplicationScenarioId = null; notice = `Applied ${preview.candidates.length} executed transaction(s) atomically.`; render(); });
+    document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.addEventListener('click', () => { const holding = activeHolding(); const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario); if (!preview.valid || !preview.candidates.length) { notice = t('noEligibleExecuted'); pendingApplicationScenarioId = null; render(); return; } if (!window.confirm(t('confirmApplyExecuted', { rows: preview.candidates.length }))) return; holding.baseShares = preview.finalPosition.shares; holding.baseAverage = preview.finalPosition.averagePrice; const appliedAt = new Date().toISOString(); const ids = new Set(preview.candidates.map((transaction) => transaction.id)); scenario.transactions.forEach((transaction) => { if (ids.has(transaction.id)) transaction.appliedAt = appliedAt; }); touchScenario(scenario); pendingApplicationScenarioId = null; notice = t('appliedExecuted', { rows: preview.candidates.length }); render(); });
   }
 
   document.querySelector<HTMLButtonElement>('#resetHolding')?.addEventListener('click', () => {
@@ -1916,7 +1924,7 @@ function wireEvents(): void {
     const replacement = createHolding({ id: current.id, ticker: current.ticker });
     const index = store.holdings.findIndex((holding) => holding.id === current.id);
     store.holdings[index] = replacement;
-    notice = 'This holding was reset.';
+    notice = t('holdingReset');
     saveStore();
     render();
   });
@@ -1926,7 +1934,7 @@ function wireEvents(): void {
       const id = button.dataset.remove ?? button.dataset.removeMobile;
       const holding = activeHolding();
       holding.transactions = holding.transactions.filter((transaction) => transaction.id !== id);
-      notice = 'Transaction removed.';
+      notice = t('transactionRemoved');
       saveStore();
       render();
     });

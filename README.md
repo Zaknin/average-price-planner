@@ -1,8 +1,8 @@
 # Average Price Planner
 
-[Open the live calculator](https://zaknin.github.io/average-price-planner/) · [Open the Help Center](https://zaknin.github.io/average-price-planner/#help)
+[Open the live calculator](https://zaknin.github.io/average-price-planner/) · [Open the Help Center](https://zaknin.github.io/average-price-planner/#help) · [Русская версия](README.ru.md)
 
-Average Price Planner is a browser-local tool for exploring stock buy and sale arithmetic. It can model average price, configurable fees, future transaction plans, scenarios, DCA ladders, sale targets, stress tests, and exports without requiring an account.
+Average Price Planner is a browser-local tool for exploring stock buy and sale arithmetic. It can model average price, configurable fees, future transaction plans, scenarios, DCA ladders, sale targets, stress tests, and exports without requiring an account. The interface and Help Center are available in English and Russian; the selected language is stored separately from portfolio data in the current browser.
 
 ## Main features
 
@@ -24,4 +24,8 @@ This application performs arithmetic and planning only. It does not provide fina
 
 ## Current version
 
-v1.8.1
+v1.9.0
+
+## Русская версия
+
+Выберите `RU` в правом верхнем углу калькулятора или справочного центра. Выбор сохраняется только в текущем браузере под отдельным ключом настроек и не попадает в JSON-резервные копии портфеля. Расчёты, сценарии, экспорт CSV и формат резервных копий остаются теми же.

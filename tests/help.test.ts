@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findHelpTopic, helpTopicSearchText, helpTopics } from '../src/help-content';
 import { helpHash, helpRouteFromHash, renderHelp, renderHelpBlock } from '../src/help';
+import { setLocale } from '../src/i18n';
 
 const requiredRoutes = ['getting-started', 'positions', 'buy-sell', 'reading-results', 'fees', 'market-snapshot', 'target-tools', 'buying-guide', 'future-plan', 'scenario-planner', 'dca-ladder', 'saved-scenarios', 'scenario-comparison', 'reverse-sell', 'stress-tests', 'executed-transactions', 'backup-export', 'privacy', 'glossary'];
 
@@ -9,6 +10,7 @@ beforeEach(() => {
   document.body.innerHTML = '<div id="app"></div>';
   window.location.hash = '';
   localStorage.clear();
+  setLocale('en');
 });
 
 describe('Help Center content and routes', () => {
@@ -92,5 +94,24 @@ describe('Help Center content and routes', () => {
     expect(rendered).not.toContain('<script>bad()</script>');
     expect(helpTopicSearchText(findHelpTopic('glossary')!)).toContain('cash returned by sales');
     expect(helpTopicSearchText(findHelpTopic('buying-guide')!)).toContain('diminishing returns');
+  });
+
+  it('renders the Russian catalog on the same stable Help route', () => {
+    const app = document.querySelector<HTMLDivElement>('#app')!;
+    setLocale('ru');
+    expect(helpRouteFromHash('#help/reading-results')).toBe('reading-results');
+    renderHelp(app, 'reading-results', { backToCalculator: vi.fn() });
+    expect(app.textContent).toContain('Как читать результаты');
+    expect(app.textContent).toContain('Валовая сумма');
+    expect(app.querySelector('[data-locale="ru"]')?.classList.contains('active')).toBe(true);
+
+    renderHelp(app, 'home', { backToCalculator: vi.fn() });
+    const search = app.querySelector<HTMLInputElement>('#helpSearch')!;
+    search.value = 'cash released';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(app.textContent).toContain('Глоссарий');
+
+    renderHelp(app, 'glossary', { backToCalculator: vi.fn() });
+    expect(app.querySelectorAll('.help-definitions dt')).toHaveLength(32);
   });
 });

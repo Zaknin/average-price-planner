@@ -92,6 +92,8 @@ export interface ScenarioSummary {
 export interface ExecutionApplicationPreview {
   valid: boolean;
   error: string | null;
+  /** Stable diagnostic code for localized UI; legacy text remains for compatibility. */
+  errorCode?: PlannerMessageCode | null;
   candidates: ScenarioTransaction[];
   skipped: ScenarioTransaction[];
   finalPosition: Position;
@@ -114,6 +116,8 @@ export interface ReverseSellRequest {
 export interface ReverseSellResult {
   valid: boolean;
   error: string | null;
+  /** Stable diagnostic code for localized UI; legacy text remains for compatibility. */
+  errorCode?: PlannerMessageCode | null;
   requiredPrice: number;
   requiredShares: number;
   grossAmount: number;
@@ -124,6 +128,12 @@ export interface ReverseSellResult {
   returnPercent: number;
   remainingPosition: Position;
 }
+
+export type PlannerMessageCode =
+  | 'invalidPosition' | 'invalidSellFee' | 'invalidTarget' | 'invalidSaleQuantity'
+  | 'invalidSalePrice' | 'unattainableTarget' | 'requiredQuantityExceedsPosition'
+  | 'executionApplyFailed' | 'invalidLadderLevels' | 'invalidLadderFee'
+  | 'invalidLadderInvestment' | 'invalidLadderShares' | 'ladderFeeUncovered';
 
 export interface HoldingLike {
   id: string;

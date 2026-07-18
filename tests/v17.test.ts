@@ -35,6 +35,7 @@ describe('v1.7 DCA ladder', () => {
   it('rejects a fixed-fee equal-cash level that cannot cover its fee', () => {
     const generated = generateDcaLadder({ ...ladder({ totalInvestment: 3, feeMode: 'fixed', fixedFeeValue: 2 }), makeId: () => 'id' });
     expect(generated.error).toContain('cannot cover');
+    expect(generated.errorCode).toBe('ladderFeeUncovered');
   });
 
   it('includes the current position only when requested', () => {
@@ -54,8 +55,12 @@ describe('v1.7 reverse sales and scenarios', () => {
   });
 
   it('rejects oversells, 100% percentage fees, and return-at-price share solving', () => {
-    expect(reverseSell({ position: base, fee: { mode: 'percent', value: 0 }, shareStep: 1, mode: 'profit', direction: 'price', shares: 101, targetValue: 1 }).valid).toBe(false);
-    expect(reverseSell({ position: base, fee: { mode: 'percent', value: 100 }, shareStep: 1, mode: 'profit', direction: 'price', shares: 1, targetValue: 1 }).valid).toBe(false);
+    const oversell = reverseSell({ position: base, fee: { mode: 'percent', value: 0 }, shareStep: 1, mode: 'profit', direction: 'price', shares: 101, targetValue: 1 });
+    expect(oversell.valid).toBe(false);
+    expect(oversell.errorCode).toBe('invalidSaleQuantity');
+    const excessiveFee = reverseSell({ position: base, fee: { mode: 'percent', value: 100 }, shareStep: 1, mode: 'profit', direction: 'price', shares: 1, targetValue: 1 });
+    expect(excessiveFee.valid).toBe(false);
+    expect(excessiveFee.errorCode).toBe('invalidSellFee');
     const atPrice = reverseSell({ position: base, fee: { mode: 'percent', value: 0 }, shareStep: 1, mode: 'return', direction: 'shares', shares: 10, price: 60, targetValue: 10 });
     expect(atPrice.valid).toBe(true);
     expect(atPrice.returnPercent).toBe(20);
@@ -72,6 +77,7 @@ describe('v1.7 reverse sales and scenarios', () => {
     expect(previewExecutionApplication(base, working).candidates).toHaveLength(1);
     const invalid = scenario([transaction('sell', { type: 'sell', status: 'executed', shares: 101, executionDate: '2026-07-18T00:00:00Z' })]);
     expect(previewExecutionApplication(base, invalid).valid).toBe(false);
+    expect(previewExecutionApplication(base, invalid).errorCode).toBe('executionApplyFailed');
   });
 
   it('does not apply an already-applied execution twice and expands/sorts stress entries', () => {

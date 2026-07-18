@@ -21,6 +21,7 @@ import type {
   ScenarioTransaction,
   StressPrice,
 } from './domain';
+import type { PlannerMessageCode } from './domain';
 
 const EPSILON = 1e-12;
 
@@ -49,16 +50,16 @@ export function activeLadderFee(ladder: Pick<DcaLadder, 'feeMode' | 'percentFeeV
     : { mode: 'percent', value: ladder.percentFeeValue };
 }
 
-export function generateDcaLadder(input: GenerateLadderRequest): { ladder: DcaLadder; error: string | null; unallocatedCash: number } {
+export function generateDcaLadder(input: GenerateLadderRequest): { ladder: DcaLadder; error: string | null; errorCode: PlannerMessageCode | null; unallocatedCash: number } {
   const count = Math.floor(input.levelCount);
   const step = input.sharePrecision > 0 ? input.sharePrecision : 1;
   if (count < 2 || count > 20 || !validPositive(input.startPrice) || !validPositive(input.endPrice)) {
-    return { ladder: { ...input, levels: [] }, error: 'Use 2–20 levels and positive start/end prices.', unallocatedCash: 0 };
+    return { ladder: { ...input, levels: [] }, error: 'Use 2–20 levels and positive start/end prices.', errorCode: 'invalidLadderLevels', unallocatedCash: 0 };
   }
   const fee = activeLadderFee(input);
-  if (!Number.isFinite(fee.value) || fee.value < 0) return { ladder: { ...input, levels: [] }, error: 'Fee values must be finite and zero or greater.', unallocatedCash: 0 };
-  if (input.distribution === 'equalCash' && !validPositive(input.totalInvestment)) return { ladder: { ...input, levels: [] }, error: 'Enter a positive all-in investment amount.', unallocatedCash: 0 };
-  if (input.distribution === 'equalShares' && !validPositive(input.totalShares)) return { ladder: { ...input, levels: [] }, error: 'Enter a positive total share quantity.', unallocatedCash: 0 };
+  if (!Number.isFinite(fee.value) || fee.value < 0) return { ladder: { ...input, levels: [] }, error: 'Fee values must be finite and zero or greater.', errorCode: 'invalidLadderFee', unallocatedCash: 0 };
+  if (input.distribution === 'equalCash' && !validPositive(input.totalInvestment)) return { ladder: { ...input, levels: [] }, error: 'Enter a positive all-in investment amount.', errorCode: 'invalidLadderInvestment', unallocatedCash: 0 };
+  if (input.distribution === 'equalShares' && !validPositive(input.totalShares)) return { ladder: { ...input, levels: [] }, error: 'Enter a positive total share quantity.', errorCode: 'invalidLadderShares', unallocatedCash: 0 };
 
   const prices = Array.from({ length: count }, (_, index) => {
     const progress = index / (count - 1);
@@ -87,7 +88,8 @@ export function generateDcaLadder(input: GenerateLadderRequest): { ladder: DcaLa
   }
   const ladder: DcaLadder = { ...input, levelCount: count, levels };
   const used = projectLadder(ladder, { shares: 0, averagePrice: 0 }, 0).reduce((sum, row) => sum + row.totalAmount, 0);
-  return { ladder, error: input.distribution === 'equalCash' && levels.some((level) => level.shares <= 0) ? 'One or more level allocations cannot cover the configured fixed fee.' : null, unallocatedCash: input.distribution === 'equalCash' ? Math.max(0, input.totalInvestment - used) : 0 };
+  const feeUncovered = input.distribution === 'equalCash' && levels.some((level) => level.shares <= 0);
+  return { ladder, error: feeUncovered ? 'One or more level allocations cannot cover the configured fixed fee.' : null, errorCode: feeUncovered ? 'ladderFeeUncovered' : null, unallocatedCash: input.distribution === 'equalCash' ? Math.max(0, input.totalInvestment - used) : 0 };
 }
 
 export function projectLadder(ladder: DcaLadder, current: Position, marketPrice: number): LadderProjection[] {
@@ -186,25 +188,25 @@ export function summarizeScenario(scenario: Scenario, sellFee: FeeSettings): Sce
 }
 
 export function reverseSell(request: ReverseSellRequest): ReverseSellResult {
-  const base: ReverseSellResult = { valid: false, error: null, requiredPrice: 0, requiredShares: 0, grossAmount: 0, feeAmount: 0, netAmount: 0, costBasis: 0, realizedProfitLoss: 0, returnPercent: 0, remainingPosition: { ...request.position } };
+  const base: ReverseSellResult = { valid: false, error: null, errorCode: null, requiredPrice: 0, requiredShares: 0, grossAmount: 0, feeAmount: 0, netAmount: 0, costBasis: 0, realizedProfitLoss: 0, returnPercent: 0, remainingPosition: { ...request.position } };
   const r = request.fee.mode === 'percent' ? request.fee.value / 100 : 0;
-  if (!validPositive(request.position.shares) || !validPositive(request.position.averagePrice)) return { ...base, error: 'Enter a valid current position first.' };
-  if (!Number.isFinite(request.fee.value) || request.fee.value < 0 || r >= 1) return { ...base, error: 'Use a sell fee below 100%.' };
+  if (!validPositive(request.position.shares) || !validPositive(request.position.averagePrice)) return { ...base, error: 'Enter a valid current position first.', errorCode: 'invalidPosition' };
+  if (!Number.isFinite(request.fee.value) || request.fee.value < 0 || r >= 1) return { ...base, error: 'Use a sell fee below 100%.', errorCode: 'invalidSellFee' };
   const target = Number(request.targetValue ?? 0);
-  if (!Number.isFinite(target) || target < 0) return { ...base, error: 'Enter a finite target of zero or greater.' };
+  if (!Number.isFinite(target) || target < 0) return { ...base, error: 'Enter a finite target of zero or greater.', errorCode: 'invalidTarget' };
   let shares = Number(request.shares ?? 0);
   let price = Number(request.price ?? 0);
   if (request.direction === 'price') {
-    if (!validPositive(shares) || shares > request.position.shares + EPSILON) return { ...base, error: 'Enter a sale quantity within the available shares.' };
+    if (!validPositive(shares) || shares > request.position.shares + EPSILON) return { ...base, error: 'Enter a sale quantity within the available shares.', errorCode: 'invalidSaleQuantity' };
     const basis = shares * request.position.averagePrice;
     const profit = request.mode === 'return' ? basis * target / 100 : request.mode === 'profit' ? target : 0;
     price = request.mode === 'netProceeds'
       ? request.fee.mode === 'percent' ? target / (shares * (1 - r)) : (target + request.fee.value) / shares
       : request.fee.mode === 'percent' ? (basis + profit) / (shares * (1 - r)) : (basis + profit + request.fee.value) / shares;
   } else {
-    if (!validPositive(price)) return { ...base, error: 'Enter a sale price to solve for shares.' };
+    if (!validPositive(price)) return { ...base, error: 'Enter a sale price to solve for shares.', errorCode: 'invalidSalePrice' };
     if (request.mode === 'return') {
-      if (!validPositive(shares) || shares > request.position.shares + EPSILON) return { ...base, error: 'Enter a sale quantity within the available shares to inspect its achieved return.' };
+      if (!validPositive(shares) || shares > request.position.shares + EPSILON) return { ...base, error: 'Enter a sale quantity within the available shares to inspect its achieved return.', errorCode: 'invalidSaleQuantity' };
       const feeAmount = feeAmountFor(shares * price, request.fee);
       const netAmount = shares * price - feeAmount;
       const costBasis = shares * request.position.averagePrice;
@@ -213,9 +215,9 @@ export function reverseSell(request: ReverseSellRequest): ReverseSellResult {
     }
     const denominator = request.mode === 'netProceeds' ? price * (1 - r) : price * (1 - r) - request.position.averagePrice;
     const numerator = request.mode === 'netProceeds' ? target + (request.fee.mode === 'fixed' ? request.fee.value : 0) : target + (request.fee.mode === 'fixed' ? request.fee.value : 0);
-    if (denominator <= EPSILON) return { ...base, error: 'This target cannot be reached at the entered sale price after fees.' };
+    if (denominator <= EPSILON) return { ...base, error: 'This target cannot be reached at the entered sale price after fees.', errorCode: 'unattainableTarget' };
     shares = roundToShareStep(numerator / denominator, request.shareStep, 'ceil');
-    if (!validPositive(shares) || shares > request.position.shares + EPSILON) return { ...base, error: 'The required sale quantity exceeds the available position.' };
+    if (!validPositive(shares) || shares > request.position.shares + EPSILON) return { ...base, error: 'The required sale quantity exceeds the available position.', errorCode: 'requiredQuantityExceedsPosition' };
   }
   const feeAmount = feeAmountFor(shares * price, request.fee);
   const netAmount = shares * price - feeAmount;
@@ -246,8 +248,8 @@ export function previewExecutionApplication(position: Position, scenario: Scenar
       totalFees += result.feeAmount;
       netProceeds += result.type === 'sell' ? result.netAmount : -result.totalAmount;
     }
-    return { valid: true, error: null, candidates, skipped, finalPosition: current, realizedProfitLoss, totalFees, netProceeds };
+    return { valid: true, error: null, errorCode: null, candidates, skipped, finalPosition: current, realizedProfitLoss, totalFees, netProceeds };
   } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : 'Executed transactions could not be applied.', candidates, skipped, finalPosition: position, realizedProfitLoss: 0, totalFees: 0, netProceeds: 0 };
+    return { valid: false, error: error instanceof Error ? error.message : 'Executed transactions could not be applied.', errorCode: 'executionApplyFailed', candidates, skipped, finalPosition: position, realizedProfitLoss: 0, totalFees: 0, netProceeds: 0 };
   }
 }

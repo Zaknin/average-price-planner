@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.0
+
+- Added a Russian interface and Russian Help Center on the existing Help routes.
+- Added a persistent, browser-only EN / RU language selector and locale-aware display formatting.
+- Centralized translation lookup, interpolation, plural selection, validation-ready messages, and document metadata.
+- Added Russian README guidance while preserving browser-local portfolio data and backup schemas.
+
 ## 1.8.1
 
 - Improved English Help articles and added the Reading the Results guide.

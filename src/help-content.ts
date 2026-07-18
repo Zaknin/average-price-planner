@@ -1,4 +1,6 @@
 import type { HelpBlock, HelpGroup, HelpTopic } from './help-types';
+import type { Locale } from './i18n';
+import { russianHelpTopics } from './help-content.ru';
 
 export type { HelpBlock, HelpGroup, HelpTopic } from './help-types';
 
@@ -130,8 +132,12 @@ export const helpTopics: HelpTopic[] = [
 
 export const helpGroups: HelpGroup[] = ['New users', 'Understand your position', 'Advanced planning', 'Your data'];
 
-export function findHelpTopic(slug: string): HelpTopic | undefined {
-  return helpTopics.find((item) => item.slug === slug);
+export function getHelpTopics(locale: Locale): HelpTopic[] {
+  return locale === 'ru' ? russianHelpTopics : helpTopics;
+}
+
+export function findHelpTopic(slug: string, locale: Locale = 'en'): HelpTopic | undefined {
+  return getHelpTopics(locale).find((item) => item.slug === slug);
 }
 
 export function helpTopicSearchText(topic: HelpTopic): string {

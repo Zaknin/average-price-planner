@@ -20,12 +20,19 @@ npm run build
 - `src/domain.ts` and `src/planner.ts` contain scenarios and planning helpers.
 - `src/data.ts` validates backup and CSV data.
 - `src/help-types.ts` defines the typed, language-ready Help block model.
-- `src/help-content.ts` contains the English topic catalog. Keep complete messages and examples in this file rather than in rendering code.
-- `src/help.ts` renders typed blocks safely as paragraphs, steps, examples, result lists, definitions, notes, and warnings.
+- `src/i18n.ts` owns the `en` / `ru` preference, `Intl` formatting, interpolation, plural selection, document metadata, and English fallback. The preference key is separate from the portfolio store and backups.
+- `src/locales/` contains interface translations; `src/help-content.ts` and `src/help-content.ru.ts` contain the English and Russian topic catalogs.
+- `src/help.ts` renders typed blocks safely as paragraphs, steps, examples, result lists, definitions, notes, and warnings for the selected locale.
 
-## Help content and future localization
+## Help content and localization
 
-Add a Help topic by creating a typed catalog entry with a stable slug and a related calculator-section ID. Keep article text, glossary definitions, example labels, and search keywords together in the catalog so another language can supply an equivalent catalog later. Generic Help interface strings are centralized in `src/help.ts`; a future localization pass will need to translate those strings as well as the catalog. Do not match application errors by English text or add a language control until that dedicated release.
+Add a Help topic to both typed catalogs with the same stable slug and related calculator-section ID. Keep article text, glossary definitions, example labels, and search keywords together in each catalog. Translate UI copy through `i18n.ts`; do not persist locale data in the portfolio store or backups.
+
+Translation catalogs are compiler-checked for English/Russian key parity. UI validation must select a stable message code and then translate that code; it must not infer a translation by matching an English diagnostic string. `t()` safely falls back to English when a catalog entry is unavailable, so implementation code must never render raw keys or diagnostic codes.
+
+Use `Intl.NumberFormat`, `Intl.DateTimeFormat`, and `Intl.PluralRules` through `i18n.ts` for display values. `parseLocalizedDecimal()` accepts either a Russian decimal comma or a decimal point in supported numeric inputs and rejects ambiguous grouping/separator formats. Convert the result to a number before calculations; do not localize values retained in state.
+
+The portfolio store remains schema v4 and the backup document remains schema v2. Locale preference uses `average-price-planner:locale`, separately from `average-down-optimizer:v2`, and is excluded from JSON backups. JSON and CSV preserve their canonical numeric, enum, date, and UTF-8/BOM formats regardless of UI locale.
 
 ## GitHub Pages
 
