@@ -610,7 +610,7 @@ function resultStrip(position: Position, holding: HoldingState): string {
         <div><span>Average cost</span><strong>${result.sharesAfter > 0 ? formatCurrency(result.averageAfter) : 'Position closed'}</strong></div>
         <div><span>Estimated realized P/L</span><strong class="${pnlClass}">${formatCurrency(result.realizedProfitLoss)}</strong></div>
       </div>
-      <p class="simple-note">Selling shares does not change the average cost of the shares you keep. It only reduces the share count and realizes a gain or loss.</p>
+      <p class="simple-note">Selling shares does not change the average cost of the shares you keep. It only reduces the share count and realizes a gain or loss. ${contextualHelpLink('reading-results')}</p>
     `;
   }
 
@@ -624,6 +624,7 @@ function resultStrip(position: Position, holding: HoldingState): string {
       <div><span>New average</span><strong>${formatCurrency(analysis.newAverage)}</strong></div>
       <div><span>Average change</span><strong class="${analysis.reduction > 0 ? 'positive' : analysis.newAverage > position.averagePrice ? 'negative' : ''}">${analysis.reduction > 0 ? `−${formatCurrency(analysis.reduction)}` : formatCurrency(analysis.newAverage - position.averagePrice)}</strong></div>
     </div>
+    <p class="simple-note result-help">${contextualHelpLink('reading-results')}</p>
   `;
 }
 
@@ -632,7 +633,7 @@ function optimizerCards(position: Position, holding: HoldingState): string {
   const fee = holding.buyFee;
   const step = isFinitePositive(holding.shareStep) ? holding.shareStep : 1;
   if (!isFinitePositive(price)) {
-    return `<div class="empty-state">Enter a buy price to see useful purchase-size reference points.</div>`;
+    return `<div class="empty-state">Enter a buy price to see average-reduction reference points.</div>`;
   }
 
   if (price >= position.averagePrice) {
@@ -654,26 +655,26 @@ function optimizerCards(position: Position, holding: HoldingState): string {
   return `
     <div class="optimizer-grid">
       ${metricCard(
-        'Useful stopping reference',
+        'Diminishing-return reference',
         `${formatQuantity(floorPoint.quantity)} shares`,
         `After this purchase, each extra share is only ${percent(floorPoint.marginalEfficiencyRemaining * 100)} as effective as the first one.`,
         `Gross ${formatCurrency(floorPoint.grossAmount)} · Fee ${formatCurrency(floorPoint.feeAmount)} · Total ${formatCurrency(floorPoint.totalCost)} · New average ${formatCurrency(floorPoint.newAverage)}`,
       )}
       ${metricCard(
-        'Half of the possible drop',
+        'Halfway toward the buy price',
         `${formatQuantity(halfPoint.quantity)} shares`,
         `This moves your average halfway from ${formatCurrency(position.averagePrice)} toward the ${formatCurrency(price)} buy price.`,
         `Gross ${formatCurrency(halfPoint.grossAmount)} · Fee ${formatCurrency(halfPoint.feeAmount)} · Total ${formatCurrency(halfPoint.totalCost)} · New average ${formatCurrency(halfPoint.newAverage)}`,
       )}
       ${budgetPoint && fullBudgetPoint
         ? metricCard(
-            'Smaller efficient buy',
+        'Smaller buy with similar benefit',
             `${formatQuantity(budgetPoint.quantity)} shares`,
             `This captures ${percent(holding.budgetBenefitTarget * 100, 0)} of the lowering you would get by spending your full budget.`,
             `Gross ${formatCurrency(budgetPoint.grossAmount)} · Fee ${formatCurrency(budgetPoint.feeAmount)} · Total ${formatCurrency(budgetPoint.totalCost)} · Keep ${formatCurrency(fullBudgetPoint.totalCost - budgetPoint.totalCost)} unspent`,
           )
         : metricCard(
-            'Budget comparison',
+            'Full-budget comparison',
             'Set a budget',
             fee.mode === 'fixed' && fee.value >= holding.budget ? 'The fixed buy fee uses the full budget, so no purchase is affordable.' : 'Enter a budget to compare a smaller efficient purchase with spending the full amount.',
           )}
@@ -719,8 +720,8 @@ function scenarioTable(position: Position, holding: HoldingState): string {
         <div><dt>Total required</dt><dd>${formatCurrency(item.totalCost)}</dd></div>
         <div><dt>New average</dt><dd>${formatCurrency(item.newAverage)}</dd></div>
         <div><dt>Average lowered</dt><dd class="positive">${formatCurrency(item.reduction)} (${percent(item.reductionPercent)})</dd></div>
-        <div><dt>Possible drop</dt><dd>${percent(item.theoreticalReductionCaptured * 100)}</dd></div>
-        <div><dt>Next-share usefulness</dt><dd>${percent(item.marginalEfficiencyRemaining * 100)}</dd></div>
+        <div><dt>Reduction reached</dt><dd>${percent(item.theoreticalReductionCaptured * 100)}</dd></div>
+        <div><dt>Effect of one more share</dt><dd>${percent(item.marginalEfficiencyRemaining * 100)}</dd></div>
       </dl>
     </article>
   `).join('');
@@ -736,8 +737,8 @@ function scenarioTable(position: Position, holding: HoldingState): string {
             <th>Total</th>
             <th>New average</th>
             <th>Average falls by</th>
-            <th>Possible drop reached</th>
-            <th>Next-share usefulness</th>
+            <th>Available average reduction reached</th>
+            <th>Effect of one more share</th>
           </tr>
         </thead>
         <tbody>
@@ -819,7 +820,7 @@ function curveSvg(position: Position, holding: HoldingState): string {
         <line x1="${padX}" y1="${padY + plotH / 2}" x2="${padX + plotW}" y2="${padY + plotH / 2}" class="grid" />
         <polyline points="${points.join(' ')}" class="curve-line" />
         <circle cx="${markerX}" cy="${markerY}" r="6" class="curve-marker" />
-        <text x="${Math.min(markerX + 10, width - 205)}" y="${Math.max(markerY - 10, 18)}" class="chart-label">${formatQuantity(markerQty)} shares · ${percent(marker.theoreticalReductionCaptured * 100)} of possible drop</text>
+        <text x="${Math.min(markerX + 10, width - 230)}" y="${Math.max(markerY - 10, 18)}" class="chart-label">${formatQuantity(markerQty)} shares · ${percent(marker.theoreticalReductionCaptured * 100)} reduction reached</text>
         <text x="8" y="${padY + 4}" class="chart-label">100%</text>
         <text x="16" y="${padY + plotH / 2 + 4}" class="chart-label">50%</text>
         <text x="25" y="${padY + plotH + 4}" class="chart-label">0%</text>
@@ -1048,12 +1049,12 @@ function ladderPanel(scenario: Scenario, holding: HoldingState): string {
       <div class="fee-controls compact-fee" aria-label="Ladder fee"><span class="fee-controls-label">Ladder fee</span><div class="segmented-control fee-mode-control"><button data-ladder-fee-mode="percent" class="${ladder.feeMode === 'percent' ? 'active' : ''}">Percent</button><button data-ladder-fee-mode="fixed" class="${ladder.feeMode === 'fixed' ? 'active' : ''}">Fixed</button></div>${field('ladderFee', ladder.feeMode === 'fixed' ? 'Fixed fee' : 'Fee percent', activeFee.value, 'number', '0')}</div>
       <label class="check-field"><input id="ladderIncludeCurrent" type="checkbox" ${ladder.includeCurrentPosition ? 'checked' : ''} /> Include current position in cumulative average</label>
       <div class="button-row"><button id="generateLadder" class="secondary-button">Generate ladder</button><button id="addLadderLevel" class="secondary-button">Add level</button><button id="clearLadder" class="text-button">Clear</button></div>
-      ${projection.length ? `<div class="ladder-cards">${rows}</div>` : '<div class="empty-state compact-empty">Generate a ladder, then fine-tune each level before saving the scenario.</div>'}
+      ${projection.length ? `<div class="ladder-cards">${rows}</div>` : '<div class="empty-state compact-empty">Generate levels, then review each price and quantity in this scenario.</div>'}
     </section>`;
 }
 
 function scenarioTransactionsPanel(scenario: Scenario, holding: HoldingState): string {
-  if (!scenario.transactions.length) return `<div class="empty-state compact-empty">No scenario transactions yet. Generate a ladder or save a current plan.</div>`;
+  if (!scenario.transactions.length) return `<div class="empty-state compact-empty">No scenario rows yet. Generate a ladder or save the ordinary plan as a scenario.</div>`;
   return `<div class="scenario-transaction-cards">${scenario.transactions.map((transaction) => `
     <article class="transaction-card">
       <div class="transaction-card-heading"><span class="action-tag ${transaction.type}">${transaction.type === 'buy' ? 'Buy' : 'Sell'}</span><span class="status-tag ${transaction.status}">${transaction.status}</span></div>
@@ -1074,7 +1075,7 @@ function scenarioPlannerPanel(holding: HoldingState): string {
     <section class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Scenario transactions</span><h3>Planned, executed, and cancelled</h3></div><button id="exportScenarioCsv" class="text-button">Export scenario CSV</button></div>${scenarioTransactionsPanel(scenario, holding)}</section>
     ${stressPanel(scenario, holding)}
     ${reverseSellPanel(scenario, holding)}
-    ${executionApplicationPanel(scenario, holding)}` : `<div class="empty-state">Create or load a saved scenario to build a DCA ladder, record execution values, compare outcomes, and stress-test prices.</div>`;
+    ${executionApplicationPanel(scenario, holding)}` : `<div class="empty-state">Create or load a scenario to explore a ladder, recorded trades, comparison, and manual stress prices without changing the saved position.</div>`;
   return `
     <section id="scenario-planner" class="panel scenario-planner-panel">
       <div class="section-heading"><div><span class="eyebrow">Scenario planner</span><h2>Build before changing your position</h2></div><div class="heading-actions">${contextualHelpLink('scenario-planner')}<button id="toggleScenarioPlanner" class="text-button" aria-expanded="${scenarioPanelExpanded}" aria-controls="scenarioPlannerContent">${scenarioPanelExpanded ? 'Hide planner' : 'Show planner'}</button></div></div>
@@ -1114,7 +1115,7 @@ function reverseSellPanel(scenario: Scenario, holding: HoldingState): string {
 function executionApplicationPanel(scenario: Scenario, holding: HoldingState): string {
   const preview = previewExecutionApplication({ shares: holding.baseShares, averagePrice: holding.baseAverage }, scenario);
   const isPending = pendingApplicationScenarioId === scenario.id;
-  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Apply execution</span><h3>Update saved position explicitly</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>Apply executed transactions</button></div></div>${isPending ? `<div class="import-preview"><strong>Application preview</strong><span>${preview.candidates.length} executed transaction${preview.candidates.length === 1 ? '' : 's'}; ${preview.skipped.length} skipped.</span>${preview.valid ? `<span>Result: ${formatQuantity(preview.finalPosition.shares, holding)} shares at ${formatCurrency(preview.finalPosition.averagePrice, holding)} · Fees ${formatCurrency(preview.totalFees, holding)} · Realized P/L ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">Confirm apply</button><button id="cancelApplyExecuted" class="text-button">Cancel</button></div>` : `<span class="negative">${escapeHtml(preview.error ?? 'The application is blocked.')}</span>`}</div>` : '<p class="helper-text">Only executed, not-yet-applied rows are considered. Planned and cancelled rows are skipped.</p>'}</section>`;
+  return `<section id="executed-transactions" class="subpanel"><div class="section-heading compact"><div><span class="eyebrow">Apply recorded trades</span><h3>Update the saved position only after review</h3></div><div class="heading-actions">${contextualHelpLink('executed-transactions')}<button id="previewApplyExecuted" class="secondary-button" ${preview.candidates.length ? '' : 'disabled'}>Review executed trades</button></div></div>${isPending ? `<div class="import-preview"><strong>Review before applying</strong><span>Rows to apply: ${preview.candidates.length} executed transaction${preview.candidates.length === 1 ? '' : 's'}. Not included: ${preview.skipped.length} Planned, Cancelled, or already Applied row${preview.skipped.length === 1 ? '' : 's'}.</span>${preview.valid ? `<span>Result: ${formatQuantity(preview.finalPosition.shares, holding)} shares at ${formatCurrency(preview.finalPosition.averagePrice, holding)} · Fees ${formatCurrency(preview.totalFees, holding)} · Realized P/L ${formatCurrency(preview.realizedProfitLoss, holding)}</span><div class="button-row"><button id="confirmApplyExecuted" class="secondary-button">Confirm position update</button><button id="cancelApplyExecuted" class="text-button">Cancel</button></div>` : `<span class="negative">${escapeHtml(preview.error ?? 'This set of recorded trades cannot be applied.')}</span>`}</div>` : '<p class="helper-text">Only valid Executed rows that have not already been Applied can update the saved position. Planned and Cancelled rows remain out of the update.</p>'}</section>`;
 }
 
 function savedScenariosPanel(holding: HoldingState): string {
@@ -1371,7 +1372,7 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Average Price Planner <span class="release-tag">v1.8</span></h1>
+          <h1>Average Price Planner <span class="release-tag">v1.8.1</span></h1>
           <p>Compare future buys and sales for each holding</p>
         </div>
       </div>
@@ -1426,14 +1427,14 @@ function render(): void {
               ${field('budget', 'Budget limit', holding.budget, 'number', '4000', 'any')}
             </div>
             <label class="range-field">
-              <span><b>Next-share usefulness cutoff</b><output id="efficiencyFloorValue">${percent(holding.efficiencyFloor * 100, 0)}</output></span>
+              <span><b>Minimum effect of the next share</b><output id="efficiencyFloorValue">${percent(holding.efficiencyFloor * 100, 0)}</output></span>
               <input id="efficiencyFloor" type="range" min="5" max="100" step="5" value="${holding.efficiencyFloor * 100}" />
-              <small>Choose how useful the next extra share should still be compared with the first added share.</small>
+              <small>Choose how much effect the next additional share should still have compared with the first additional share.</small>
             </label>
             <label class="range-field">
-              <span><b>Keep this much of the full-budget benefit</b><output id="budgetBenefitTargetValue">${percent(holding.budgetBenefitTarget * 100, 0)}</output></span>
+              <span><b>Target share of the full-budget improvement</b><output id="budgetBenefitTargetValue">${percent(holding.budgetBenefitTarget * 100, 0)}</output></span>
               <input id="budgetBenefitTarget" type="range" min="5" max="100" step="5" value="${holding.budgetBenefitTarget * 100}" />
-              <small>Find the smallest purchase that gives this percentage of the average-price improvement available from the full budget.</small>
+              <small>Find the smallest purchase that produces at least this much of the average reduction available from spending the complete budget.</small>
             </label>
           </div>
           </div>
@@ -1512,7 +1513,7 @@ function render(): void {
             </div>
             ${scenarioTable(analyzablePosition, holding)}
             ${isFinitePositive(holding.transactionPrice) && holding.transactionPrice < analyzablePosition.averagePrice
-              ? `<p class="simple-note table-note"><strong>Possible drop reached</strong> shows how far the new average has moved toward the buy price. <strong>Next-share usefulness</strong> shows how much effect the next extra share still has.</p>`
+              ? `<p class="simple-note table-note"><strong>Available average reduction reached</strong> shows how much of the distance from the current average toward the buy price has been covered. <strong>Effect of one more share</strong> shows how strongly the next additional share would lower the average compared with the first additional share.</p>`
               : ''}
           </section>
         ` : ''}

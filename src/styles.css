@@ -514,7 +514,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
 .ladder-edit-grid input[type="datetime-local"] { min-width: 0; max-width: 100%; }
 .compact-empty { margin: 0; }
 
-/* v1.8 Help Center */
+/* v1.8.1 Help Center */
 .heading-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
 .context-help { padding: 4px 0; border: 0; color: var(--muted); background: transparent; font: inherit; font-size: .72rem; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .context-help:hover, .context-help:focus-visible { color: var(--text-strong); }
@@ -535,13 +535,43 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
 .help-main { min-width: 0; }
 .help-article { width: min(100%, 840px); padding: clamp(20px, 4vw, 44px); border: 1px solid var(--border); border-radius: 16px; background: var(--bg-deep); }
 .help-article h1 { margin: 0 0 12px; color: var(--text-strong); font-size: clamp(1.55rem, 3vw, 2.3rem); line-height: 1.12; }
-.help-article h2 { margin: 28px 0 9px; color: var(--text-strong); font-size: 1.03rem; }
+.help-article h2 { margin: 26px 0 9px; color: var(--text-strong); font-size: 1.03rem; }
 .help-article p, .help-article li { color: var(--muted); line-height: 1.65; }
 .help-article ol, .help-article ul { display: grid; gap: 8px; margin: 10px 0; padding-left: 22px; }
 .help-lead { max-width: 680px; font-size: 1rem; }
 .help-beginner, .help-example { margin: 18px 0; padding: 13px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: rgba(255,255,255,.025); line-height: 1.55; }
 .help-beginner strong { color: var(--text-strong); }
 .help-example { border-left: 3px solid var(--green); }
+.help-example h2 { margin-top: 0; }
+.help-topic-content { display: grid; gap: 4px; }
+.help-topic-content > p { margin: 8px 0; }
+.help-block { margin-top: 8px; }
+.help-topic-jumps { display: flex; flex-wrap: wrap; gap: 8px; }
+.help-topic-jump { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--bg-deep); font: inherit; font-size: .78rem; cursor: pointer; }
+.help-topic-jump:hover, .help-topic-jump:focus-visible { border-color: rgba(16,163,127,.6); background: var(--green-soft); }
+.help-example-rows,
+.help-result-list,
+.help-definitions { display: grid; gap: 8px; margin: 12px 0 0; }
+.help-example-rows { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.help-example-rows div,
+.help-result-list div,
+.help-definitions div { min-width: 0; }
+.help-example-rows div { padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,.018); }
+.help-example-rows dt,
+.help-result-list dt,
+.help-definitions dt { color: var(--text-strong); font-size: .76rem; font-weight: 700; }
+.help-example-rows dd,
+.help-result-list dd,
+.help-definitions dd { margin: 3px 0 0; color: var(--muted); font-size: .78rem; line-height: 1.5; overflow-wrap: anywhere; }
+.help-result-list div,
+.help-definitions div { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.help-result-list div:last-child,
+.help-definitions div:last-child { border-bottom: 0; }
+.help-callout { margin: 18px 0 4px; padding: 12px 13px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.025); }
+.help-callout strong { color: var(--text-strong); font-size: .82rem; }
+.help-callout p { margin: 4px 0 0; }
+.help-callout.warning { border-color: rgba(242,193,78,.38); background: rgba(242,193,78,.08); }
+.help-callout.warning strong { color: #f5d98d; }
 .help-search { display: grid; gap: 6px; margin: 20px 0; color: var(--muted); font-size: .76rem; }
 .help-search input { min-height: 44px; width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; color: var(--text-strong); background: var(--input); font: inherit; font-size: 16px; }
 .help-home-group { margin-top: 28px; }
@@ -687,6 +717,7 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.035); }
   .help-topic-navigation.is-expanded { display: grid; }
   .help-article { width: 100%; padding: 19px 14px; border-radius: 13px; }
   .help-topic-cards { grid-template-columns: 1fr; }
+  .help-example-rows { grid-template-columns: 1fr; }
   .help-article h1 { font-size: 1.5rem; }
   .saved-scenario-cards .button-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
   .saved-scenario-cards .button-row > * { min-width: 0; }

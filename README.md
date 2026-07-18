@@ -10,7 +10,7 @@ Average Price Planner is a browser-local tool for exploring stock buy and sale a
 - Fee-aware buy and sale previews, market snapshots, target tools, and future plans.
 - Scenario sandboxes, DCA ladders, reverse sell planning, stress tests, and controlled execution application.
 - JSON backups plus spreadsheet-safe plan, scenario, and ladder CSV exports.
-- A built-in [Help Center](https://zaknin.github.io/average-price-planner/#help) written for everyday calculator use.
+- A built-in [Help Center](https://zaknin.github.io/average-price-planner/#help), including a [Reading the results guide](https://zaknin.github.io/average-price-planner/#help/reading-results).
 
 ## Browser-local storage and privacy
 
@@ -24,4 +24,4 @@ This application performs arithmetic and planning only. It does not provide fina
 
 ## Current version
 
-v1.8.0
+v1.8.1

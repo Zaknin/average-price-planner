@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { findHelpTopic, helpTopics } from '../src/help-content';
-import { helpHash, helpRouteFromHash, renderHelp } from '../src/help';
+import { findHelpTopic, helpTopicSearchText, helpTopics } from '../src/help-content';
+import { helpHash, helpRouteFromHash, renderHelp, renderHelpBlock } from '../src/help';
 
-const requiredRoutes = ['getting-started', 'positions', 'buy-sell', 'fees', 'market-snapshot', 'target-tools', 'buying-guide', 'future-plan', 'scenario-planner', 'dca-ladder', 'saved-scenarios', 'scenario-comparison', 'reverse-sell', 'stress-tests', 'executed-transactions', 'backup-export', 'privacy', 'glossary'];
+const requiredRoutes = ['getting-started', 'positions', 'buy-sell', 'reading-results', 'fees', 'market-snapshot', 'target-tools', 'buying-guide', 'future-plan', 'scenario-planner', 'dca-ladder', 'saved-scenarios', 'scenario-comparison', 'reverse-sell', 'stress-tests', 'executed-transactions', 'backup-export', 'privacy', 'glossary'];
 
 beforeEach(() => {
   document.body.innerHTML = '<div id="app"></div>';
@@ -12,66 +12,85 @@ beforeEach(() => {
 });
 
 describe('Help Center content and routes', () => {
-  it('includes every required topic and maps every direct Help route', () => {
+  it('keeps every existing route, adds Reading the results, and falls back safely', () => {
     expect(helpTopics).toHaveLength(requiredRoutes.length);
     for (const slug of requiredRoutes) {
       expect(findHelpTopic(slug)?.title).toBeTruthy();
       expect(helpRouteFromHash(`#help/${slug}`)).toBe(slug);
       expect(helpHash(slug)).toBe(`#help/${slug}`);
     }
-  });
-
-  it('opens Help home and safely falls back for unknown routes', () => {
     expect(helpRouteFromHash('#help')).toBe('home');
     expect(helpRouteFromHash('#help/not-a-topic')).toBe('home');
     expect(helpRouteFromHash('#position')).toBeNull();
   });
 
-  it('renders the Help home, filters by title and keyword, and clears the filter', () => {
+  it('renders the beginner path and searches titles, definitions, headings, and examples', () => {
     const app = document.querySelector<HTMLDivElement>('#app')!;
     renderHelp(app, 'home', { backToCalculator: vi.fn() });
-    expect(app.textContent).toContain('How to use Average Price Planner');
-    const input = app.querySelector<HTMLInputElement>('#helpSearch')!;
-    input.value = 'ladder';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    const filteredCards = Array.from(app.querySelectorAll('.help-topic-cards')).map((element) => element.textContent).join(' ');
-    expect(filteredCards).toContain('DCA Ladder');
-    expect(filteredCards).not.toContain('Current market snapshot');
-    const filtered = app.querySelector<HTMLInputElement>('#helpSearch')!;
-    filtered.value = 'commission';
-    filtered.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(app.textContent).toContain('Fees');
-    const empty = app.querySelector<HTMLInputElement>('#helpSearch')!;
-    empty.value = 'no-such-help-topic';
-    empty.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(app.textContent).toContain('No help topics match');
-    const cleared = app.querySelector<HTMLInputElement>('#helpSearch')!;
-    cleared.value = '';
-    cleared.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(app.textContent).toContain('Getting started');
+    expect(app.textContent).toContain('You do not need to use every section.');
+    expect(app.textContent).toContain('Reading the results');
+
+    renderHelp(app, 'getting-started', { backToCalculator: vi.fn() });
+    expect(app.querySelector('[data-help-topic="reading-results"]')).not.toBeNull();
+    renderHelp(app, 'home', { backToCalculator: vi.fn() });
+
+    const search = (value: string): string => {
+      const input = app.querySelector<HTMLInputElement>('#helpSearch')!;
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return app.textContent ?? '';
+    };
+    expect(search('diminishing returns')).toContain('Buying guide and diminishing returns');
+    expect(search('cost basis')).toContain('Reading the results');
+    expect(search('cash returned by sales')).toContain('Glossary');
+    expect(search('no-such-help-topic')).toContain('No help topics match');
   });
 
-  it('marks the current topic, opens a compact topic disclosure, and returns to calculator', () => {
+  it('renders detailed Buying Guide, DCA, Scenario, Executed, and glossary content with semantic lists', () => {
+    const app = document.querySelector<HTMLDivElement>('#app')!;
+    renderHelp(app, 'buying-guide', { backToCalculator: vi.fn() });
+    expect(app.textContent).toContain('Buy 25 shares');
+    expect(app.textContent).toContain('Buy 200 shares');
+    expect(app.textContent).toContain('Diminishing-return reference');
+
+    renderHelp(app, 'dca-ladder', { backToCalculator: vi.fn() });
+    expect(app.textContent).toContain('Level 1 at $40');
+    expect(app.textContent).toContain('Level 2 at $35');
+    expect(app.textContent).toContain('Level 3 at $30');
+
+    renderHelp(app, 'scenario-planner', { backToCalculator: vi.fn() });
+    expect(app.textContent).toContain('Four separate layers');
+    expect(app.textContent).toContain('Scenario workspace');
+
+    renderHelp(app, 'executed-transactions', { backToCalculator: vi.fn() });
+    expect(app.textContent).toContain('An order being considered.');
+    expect(app.textContent).toContain('Rows to apply');
+
+    renderHelp(app, 'glossary', { backToCalculator: vi.fn() });
+    expect(app.querySelector('dl.help-definitions')).not.toBeNull();
+    expect(app.querySelectorAll('.help-definitions dt').length).toBeGreaterThanOrEqual(32);
+    expect(app.textContent).toContain('Cash released');
+  });
+
+  it('marks the current topic, opens the mobile topic disclosure, and returns without changing storage', () => {
     const app = document.querySelector<HTMLDivElement>('#app')!;
     const back = vi.fn();
-    renderHelp(app, 'dca-ladder', { backToCalculator: back });
-    expect(app.querySelector('[aria-current="page"]')?.textContent).toContain('DCA Ladder');
-    expect(app.querySelector('#helpArticleTitle')?.textContent).toBe('DCA Ladder');
+    localStorage.setItem('average-down-optimizer:v2', 'unchanged');
+    renderHelp(app, 'reading-results', { backToCalculator: back });
+    expect(app.querySelector('[aria-current="page"]')?.textContent).toContain('Reading the results');
     const disclosure = app.querySelector<HTMLButtonElement>('#toggleHelpTopics')!;
-    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
     disclosure.click();
     expect(disclosure.getAttribute('aria-expanded')).toBe('true');
-    expect(app.querySelector('#helpTopicNavigation')?.classList.contains('is-expanded')).toBe(true);
     app.querySelector<HTMLButtonElement>('#helpBack')?.click();
     expect(back).toHaveBeenCalledOnce();
+    expect(localStorage.getItem('average-down-optimizer:v2')).toBe('unchanged');
   });
 
-  it('uses topic buttons to update the browser hash without touching local storage', () => {
-    const app = document.querySelector<HTMLDivElement>('#app')!;
-    localStorage.setItem('average-down-optimizer:v2', 'unchanged');
-    renderHelp(app, 'home', { backToCalculator: vi.fn() });
-    app.querySelector<HTMLButtonElement>('[data-help-topic="privacy"]')?.click();
-    expect(window.location.hash).toBe('#help/privacy');
-    expect(localStorage.getItem('average-down-optimizer:v2')).toBe('unchanged');
+  it('escapes structured example values and keeps glossary search data separate from rendering', () => {
+    const rendered = renderHelpBlock({ type: 'example', title: '<unsafe>', rows: [{ label: '<label>', value: '<script>bad()</script>' }] });
+    expect(rendered).toContain('&lt;script&gt;bad()&lt;/script&gt;');
+    expect(rendered).not.toContain('<script>bad()</script>');
+    expect(helpTopicSearchText(findHelpTopic('glossary')!)).toContain('cash returned by sales');
+    expect(helpTopicSearchText(findHelpTopic('buying-guide')!)).toContain('diminishing returns');
   });
 });

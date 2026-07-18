@@ -19,7 +19,13 @@ npm run build
 - `src/calculator.ts` contains fee-aware transaction arithmetic.
 - `src/domain.ts` and `src/planner.ts` contain scenarios and planning helpers.
 - `src/data.ts` validates backup and CSV data.
-- `src/help-content.ts` and `src/help.ts` own the in-app Help Center.
+- `src/help-types.ts` defines the typed, language-ready Help block model.
+- `src/help-content.ts` contains the English topic catalog. Keep complete messages and examples in this file rather than in rendering code.
+- `src/help.ts` renders typed blocks safely as paragraphs, steps, examples, result lists, definitions, notes, and warnings.
+
+## Help content and future localization
+
+Add a Help topic by creating a typed catalog entry with a stable slug and a related calculator-section ID. Keep article text, glossary definitions, example labels, and search keywords together in the catalog so another language can supply an equivalent catalog later. Generic Help interface strings are centralized in `src/help.ts`; a future localization pass will need to translate those strings as well as the catalog. Do not match application errors by English text or add a language control until that dedicated release.
 
 ## GitHub Pages
 

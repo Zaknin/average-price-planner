@@ -118,7 +118,7 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('#toggleScenarioPlanner')?.click();
     document.querySelector<HTMLButtonElement>('[data-status="executed"]')?.click();
     document.querySelector<HTMLButtonElement>('#previewApplyExecuted')?.click();
-    expect(document.body.textContent).toContain('Application preview');
+    expect(document.body.textContent).toContain('Review before applying');
     document.querySelector<HTMLButtonElement>('#confirmApplyExecuted')?.click();
     expect(document.body.textContent).toContain('Applied 1 executed transaction');
     expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}').scenarios.some((scenario: { transactions: Array<{ appliedAt?: string }> }) => scenario.transactions.some((transaction) => transaction.appliedAt))).toBe(true);
@@ -200,6 +200,20 @@ describe('application smoke test', () => {
     expect(efficiency?.max).toBe('100');
     expect(budgetBenefit?.min).toBe('5');
     expect(budgetBenefit?.max).toBe('100');
+  });
+
+  it('uses clearer Buying Guide labels without changing the calculator inputs', () => {
+    document.querySelector<HTMLButtonElement>('[data-action="buy"]')?.click();
+    const price = document.querySelector<HTMLInputElement>('#transactionPrice');
+    if (price) { price.value = '10'; price.dispatchEvent(new Event('change', { bubbles: true })); }
+    const shares = document.querySelector<HTMLInputElement>('#transactionShares');
+    if (shares) { shares.value = '1'; shares.dispatchEvent(new Event('change', { bubbles: true })); }
+    expect(document.body.textContent).toContain('Minimum effect of the next share');
+    expect(document.body.textContent).toContain('Target share of the full-budget improvement');
+    expect(document.body.textContent).toContain('Diminishing-return reference');
+    expect(document.body.textContent).toContain('Available average reduction reached');
+    expect(document.body.textContent).not.toContain('Next-share usefulness cutoff');
+    expect(document.body.textContent).not.toContain('Keep this much of the full-budget benefit');
   });
 
   it('persists a current market price and exposes target disclosures without changing the holding', () => {
