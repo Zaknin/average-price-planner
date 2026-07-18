@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.5
+
+- Corrected final Russian Help grammar issues and refined DCA, Reverse Sell, Scenario Comparison, execution, backup, and privacy wording.
+- Aligned Cost basis terminology.
+- No calculation, storage, backup, JSON, or CSV changes.
+
 ## 1.9.4
 
 - Completed substantive Russian Help parity, including workflows, warnings, export choices, and glossary definitions.

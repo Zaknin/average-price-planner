@@ -62,7 +62,7 @@ describe('Russian editorial parity', () => {
     expect(textFor('executed-transactions')).toContain('блокирует обновление целиком');
     expect(textFor('backup-export')).toContain('экспорт плана в csv');
     expect(textFor('backup-export')).toContain('csv-файлы пока нельзя импортировать');
-    expect(textFor('backup-export')).toContain('не перезаписывает совпадающие записи молча');
+    expect(textFor('backup-export')).toContain('без незаметной перезаписи существующих записей');
   });
 
   it('uses the approved Russian glossary definitions and avoids deprecated phrasing', () => {
@@ -77,5 +77,21 @@ describe('Russian editorial parity', () => {
       'исполненная сделка, которая уже использовалась для обновления сохранённой позиции',
     ]) expect(glossary).toContain(definition);
     for (const deprecated of ['архивный»', 'ручная цена «что если»', 'рабочее пространство']) expect(glossary).not.toContain(deprecated);
+  });
+
+  it('keeps the final Russian Help wording corrections in rendered content', () => {
+    const textFor = (slug: string): string => helpTopicSearchText(russianTopics.find((topic) => topic.slug === slug)!);
+    expect(textFor('getting-started')).toContain('пошаговый путь от создания позиции до сохранения резервной копии данных');
+    expect(textFor('reading-results')).toContain('суммарные затраты, относящиеся к акциям, которые остаются в позиции');
+    expect(textFor('dca-ladder')).toContain('общее количество акций');
+    expect(textFor('dca-ladder')).not.toContain('накопленные количество');
+    expect(textFor('saved-scenarios')).toContain('завершённый вариант сценария, сохранённый для истории');
+    expect(textFor('reverse-sell')).toContain('количество для продажи не может превышать');
+    expect(textFor('reverse-sell')).not.toContain('результат не может продать');
+    expect(textFor('scenario-comparison')).toContain('различия в расчётных результатах');
+    expect(textFor('executed-transactions')).toContain('статусы и результаты проверки');
+    expect(textFor('executed-transactions')).not.toContain('статусы и строки просмотра');
+    expect(textFor('backup-export')).toContain('без незаметной перезаписи существующих записей');
+    expect(textFor('privacy')).toContain('отдельное серверное хранилище приложения');
   });
 });
