@@ -99,24 +99,6 @@ echo
 
 When running the `curl` command, use the same local interface address you placed in `.env`. This repository does not deploy to any self-hosted server.
 
-## GitHub Pages
-
-The included `.github/workflows/pages.yml` builds and publishes `dist` whenever `main` is pushed (or when the workflow is run manually). It uses Vite's relative asset base, so the same build works at the Docker root and under the repository Pages path.
-
-After pushing the repository:
-
-1. Open repository **Settings → Pages**.
-2. Set **Source** to **GitHub Actions**.
-3. Run the `Deploy GitHub Pages` workflow or push to `main`.
-
-GitHub Pages availability for a private repository depends on the account or organization plan. If it is unavailable, keep the repository private until an owner chooses a different visibility or hosting option. Do not include secrets or private server information in the frontend source.
-
-## Publishing future updates
-
-1. Run `npm ci --no-audit --no-fund`, `npm test`, and `npm run build` with Node.js 22.
-2. Review `git status`, commit only source and configuration changes, and push to `main`.
-3. The Pages workflow will test, build, and deploy the `dist` artifact. Check its result in the repository **Actions** tab.
-
 ## Separate browser-local data
 
 Any self-hosted Docker site and the GitHub Pages site use different web origins. Browsers therefore keep separate `localStorage` for each site: positions and plans saved on one do not appear on the other. Neither site sends this data to a server.
