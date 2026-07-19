@@ -120,6 +120,16 @@ describe('v2.0 Russian quantity and price summaries', () => {
     expect(t('stressTests')).toBe('Stress tests');
   });
 
+  it('renders the corrected Russian browser-storage notice without changing English', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    const dataManagement = document.querySelector('#data-management')?.textContent ?? '';
+    expect(dataManagement).toContain('Все данные остаются в этом браузере. Для каждого адреса сайта браузер хранит данные отдельно.');
+    expect(dataManagement).not.toContain('Разные адреса сайта используют отдельные данные браузера.');
+
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+    expect(t('browserDataNotice')).toBe('Everything stays in this browser. Different website origins keep separate browser data.');
+  });
+
   it('renders Russian backup and plan CSV notices after successful exports', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
 
