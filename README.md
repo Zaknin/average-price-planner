@@ -24,7 +24,7 @@ This application performs arithmetic and planning only. It does not provide fina
 
 ## Current version
 
-v1.9.0
+v1.9.6
 
 ## Русская версия
 

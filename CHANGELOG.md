@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.6
+
+- Corrected remaining Russian share grammar and oversell plural forms.
+- Improved Russian numeric validation, backup export, Replace, UI, and Help wording while preserving target, projected, and estimated meanings.
+- Updated public README versions.
+- No calculation, storage, backup, JSON, or CSV changes.
+
 ## 1.9.5
 
 - Corrected final Russian Help grammar issues and refined DCA, Reverse Sell, Scenario Comparison, execution, backup, and privacy wording.

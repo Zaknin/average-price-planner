@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getHelpTopics, helpTopicSearchText, helpTopics } from '../src/help-content';
 import { ru } from '../src/locales/ru';
-import { plural, setLocale } from '../src/i18n';
+import { plural, setLocale, t } from '../src/i18n';
 
 const russianTopics = getHelpTopics('ru');
 
@@ -93,5 +93,39 @@ describe('Russian editorial parity', () => {
     expect(textFor('executed-transactions')).not.toContain('статусы и строки просмотра');
     expect(textFor('backup-export')).toContain('без незаметной перезаписи существующих записей');
     expect(textFor('privacy')).toContain('отдельное серверное хранилище приложения');
+  });
+
+  it('keeps v1.9.6 Russian runtime messages factual and fully qualified', () => {
+    for (const [shares, expected] of [
+      ['1 акции', 'Нельзя продать больше 1 акции.'],
+      ['2 акций', 'Нельзя продать больше 2 акций.'],
+      ['5 акций', 'Нельзя продать больше 5 акций.'],
+      ['21 акции', 'Нельзя продать больше 21 акции.'],
+      ['1,5 акции', 'Нельзя продать больше 1,5 акции.'],
+      ['0,25 акции', 'Нельзя продать больше 0,25 акции.'],
+    ] as Array<[string, string]>) expect(t('cannotSellMore', { shares })).toBe(expected);
+    expect(t('plannerInvalidTarget')).toBe('Введите числовое значение не меньше нуля.');
+    expect(t('plannerInvalidLadderFee')).toBe('Введите нулевую или положительную комиссию.');
+    expect(t('exportedBackup', { positions: 1, scenarios: 2 })).toBe('Резервная копия сохранена в JSON-файл: 1; сценариев: 2.');
+    expect(t('confirmReplaceImport')).toContain('Позиции, планы и сценарии будут удалены и заменены.');
+    expect(t('confirmReplaceImport')).toContain('рекомендуется экспортировать текущую резервную копию');
+    expect(t('targetNetProceeds')).toBe('Целевая сумма после комиссии');
+    expect(t('totalProjectedProfitLoss')).toBe('Расчётная итоговая прибыль/убыток');
+    expect(t('estimatedGain')).toBe('расчётная прибыль');
+    expect(t('estimatedLoss')).toBe('расчётный убыток');
+    expect(t('plannerExecutionApplyFailed')).toBe('Не удалось учесть исполненные сделки в позиции.');
+    expect(t('roundedTargetReached')).toBe('После округления итоговая средняя цена не превышает целевую.');
+    expect(t('comparisonLimit')).toBe('Можно выбрать до четырёх сценариев вне архива.');
+  });
+
+  it('renders the v1.9.6 Help wording as reader-facing Russian prose', () => {
+    const textFor = (slug: string): string => helpTopicSearchText(russianTopics.find((topic) => topic.slug === slug)!);
+    expect(textFor('reading-results')).toContain('интерпретируйте показатель с учётом контекста');
+    expect(textFor('fees')).toContain('комиссия рассчитывается от суммы до комиссии');
+    expect(textFor('target-tools')).toContain('определяет требуемое количество или цену на основе заданной цели');
+    expect(textFor('buying-guide')).toContain('для расчётного сравнения, а не как рекомендация к покупке');
+    expect(textFor('future-plan')).toContain('одиночная операция рассчитывается отдельно от плана');
+    expect(textFor('dca-ladder')).toContain('равное количество акций / заданные количества');
+    expect(textFor('reverse-sell')).toContain('количество не рассчитывается');
   });
 });

@@ -99,6 +99,68 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
   });
 
+  it('renders complete Russian remaining-position and oversell messages', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    const setField = (id: string, value: string): void => {
+      const input = document.querySelector<HTMLInputElement>(`#${id}`);
+      if (!input) throw new Error(`Missing ${id}`);
+      input.value = value;
+      if (id.startsWith('target')) input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const showSellTarget = (): void => {
+      if (document.querySelector<HTMLButtonElement>('#toggleTargets')?.getAttribute('aria-expanded') !== 'true') {
+        document.querySelector<HTMLButtonElement>('#toggleTargets')?.click();
+      }
+      document.querySelector<HTMLButtonElement>('[data-target-tab="sell"]')?.click();
+    };
+
+    for (const [shares, sharesToSell, expected] of [
+      ['1', '1', 'Остаток позиции: 0 акций, позиция закрыта'],
+      ['2', '1', 'Остаток позиции: 1 акция'],
+      ['5', '3', 'Остаток позиции: 2 акции'],
+      ['21', '16', 'Остаток позиции: 5 акций'],
+      ['1.5', '0.01', 'Остаток позиции: 1,49 акции'],
+      ['0.25', '0.01', 'Остаток позиции: 0,24 акции'],
+    ] as Array<[string, string, string]>) {
+      setField('shareStep', shares.includes('.') ? '0.01' : '1');
+      setField('baseShares', shares);
+      setField('baseAverage', '10');
+      showSellTarget();
+      setField('targetSellShares', sharesToSell);
+      expect(document.body.textContent).toContain(expected);
+    }
+
+    for (const [available, attempted, expectedAvailable, expectedMaximum] of [
+      ['1', '2', '1 акция', '1 акции'],
+      ['2', '3', '2 акции', '2 акций'],
+      ['5', '6', '5 акций', '5 акций'],
+      ['21', '22', '21 акция', '21 акции'],
+      ['1.5', '1.51', '1,5 акции', '1,5 акции'],
+      ['0.25', '0.26', '0,25 акции', '0,25 акции'],
+    ] as Array<[string, string, string, string]>) {
+      setField('shareStep', available.includes('.') ? '0.01' : '1');
+      setField('baseShares', available);
+      setField('baseAverage', '10');
+      document.querySelector<HTMLButtonElement>('[data-action="sell"]')?.click();
+      setField('transactionPrice', '10');
+      setField('transactionShares', attempted);
+      expect(document.body.textContent).toContain(`В этой планируемой позиции доступно только ${expectedAvailable}.`);
+      expect(document.body.textContent).toContain(`Уменьшите объём продажи до ${expectedMaximum} или меньше.`);
+    }
+
+    document.querySelector<HTMLButtonElement>('[data-action="buy"]')?.click();
+    setField('shareStep', '1');
+    setField('baseShares', '100');
+    setField('baseAverage', '50');
+    setField('transactionPrice', '40');
+    setField('transactionShares', '50');
+    if (document.querySelector<HTMLButtonElement>('#toggleTargets')?.getAttribute('aria-expanded') === 'true') {
+      document.querySelector<HTMLButtonElement>('#toggleTargets')?.click();
+    }
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+  });
+
   it('renders localized Scenario Planner and DCA controls in Russian', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
     document.querySelector<HTMLButtonElement>('#newScenario')?.click();
