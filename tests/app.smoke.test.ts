@@ -101,10 +101,11 @@ describe('application smoke test', () => {
       setField('baseShares', shares);
       setField('baseAverage', '50');
       const text = currentPositionText();
-      expect(text).toContain(`${expected} @`);
+      expect(text).toContain(`${expected} · средняя цена —`);
       expect(text.split(expected)).toHaveLength(2);
       expect(text).toContain('50,00');
       expect(text).toContain('$');
+      expect(text).not.toContain(' @ ');
       expect(text).not.toMatch(/(?:акция|акции|акций)\s+(?:акция|акции|акций)/);
       if (['1', '2', '21', '22', '1.5', '0.25'].includes(shares)) {
         expect(text).not.toContain(`${shares.replace('.', ',')} акций`);

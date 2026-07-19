@@ -92,6 +92,7 @@ export const en = {
   addSaleToPlan: 'Add sale to plan',
   needPosition: 'Enter your current shares and average price before testing a transaction.',
   sharesSuffix: 'shares',
+  positionAtAverage: '{shares} @ {price}', transactionAtPrice: '{shares} @ {price}', positionAtMarketPrice: '{shares} @ {price}',
   positionLabel: 'Position',
   whatIfBuy: 'What if you buy more {position}?',
   whatIfSell: 'What if you sell some {position}?',

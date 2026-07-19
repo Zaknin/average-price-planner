@@ -93,6 +93,7 @@ export const ru: Record<TranslationKey, string> = {
   addSaleToPlan: 'Добавить продажу в план',
   needPosition: 'Введите текущее количество акций и среднюю цену, прежде чем проверять операцию.',
   sharesSuffix: 'акций',
+  positionAtAverage: '{shares} · средняя цена — {price}', transactionAtPrice: '{shares} по цене {price}', positionAtMarketPrice: '{shares} по текущей цене {price}',
   positionLabel: 'Позиция',
   whatIfBuy: 'Что будет, если докупить акции в позицию «{position}»?',
   whatIfSell: 'Что будет, если продать часть позиции «{position}»?',

@@ -34,6 +34,7 @@ import type { DcaLadder, PlannerMessageCode, Scenario, ScenarioStatus, ScenarioT
 import {
   activeLadderFee,
   generateDcaLadder,
+  effectiveScenarioTransaction,
   previewExecutionApplication,
   projectLadder,
   projectScenario,
@@ -455,6 +456,15 @@ function sharePhrase(value: number, context: 'standalone' | 'genitive' | 'comple
   return context === 'genitive'
     ? countPhrase(value, 'акции', 'акций', 'акций', 'акции')
     : countPhrase(value, 'акция', 'акции', 'акций', 'акции');
+}
+
+function quantityPricePhrase(context: 'average' | 'transaction' | 'market', shares: number, price: number, holding = activeHolding()): string {
+  const key = context === 'average'
+    ? 'positionAtAverage'
+    : context === 'transaction'
+      ? 'transactionAtPrice'
+      : 'positionAtMarketPrice';
+  return t(key, { shares: sharePhrase(shares, 'complete', holding), price: formatCurrency(price, holding) });
 }
 
 function executedTradePhrase(value: number, grammaticalCase: 'accusative' | 'nominative' = 'nominative'): string {
@@ -904,7 +914,7 @@ function marketSnapshotPanel(position: Position | null, holding: HoldingState): 
       </div>
       <div id="marketSnapshot" class="disclosure-content ${marketSnapshotExpanded ? 'is-expanded' : ''}">
         <div class="snapshot-grid">
-          ${metricCard(t('currentValue'), formatCurrency(snapshot.marketValue, holding), `${sharePhrase(position!.shares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} @ ${formatCurrency(holding.currentMarketPrice, holding)}`)}
+          ${metricCard(t('currentValue'), formatCurrency(snapshot.marketValue, holding), quantityPricePhrase('market', position!.shares, holding.currentMarketPrice, holding))}
           ${metricCard(t('totalCostBasis'), formatCurrency(snapshot.basis, holding), `${t('averageCost')} ${formatCurrency(position!.averagePrice, holding)}`)}
           ${metricCard(t('grossProfitLoss'), formatCurrency(snapshot.grossUnrealizedProfitLoss, holding), t('grossReturn', { percent: percent(snapshot.grossReturnPercent) }), '', snapshot.grossUnrealizedProfitLoss >= 0 ? 'positive' : 'negative')}
           ${metricCard(t('afterFees'), formatCurrency(snapshot.netUnrealizedProfitLoss, holding), t('liquidationFee', { fee: formatCurrency(snapshot.estimatedSellFee, holding), net: formatCurrency(snapshot.netLiquidationValue, holding) }), '', netTone)}
@@ -1103,15 +1113,19 @@ function ladderPanel(scenario: Scenario, holding: HoldingState): string {
 
 function scenarioTransactionsPanel(scenario: Scenario, holding: HoldingState): string {
   if (!scenario.transactions.length) return `<div class="empty-state compact-empty">${t('noScenarioRows')}</div>`;
-  return `<div class="scenario-transaction-cards">${scenario.transactions.map((transaction) => `
+  return `<div class="scenario-transaction-cards">${scenario.transactions.map((transaction) => {
+    const effective = effectiveScenarioTransaction(transaction) ?? transaction;
+    const label = transaction.status === 'executed' ? t('executed') : t('planned');
+    return `
     <article class="transaction-card">
       <div class="transaction-card-heading"><span class="action-tag ${transaction.type}">${transaction.type === 'buy' ? t('buy') : t('sell')}</span><span class="status-tag ${transaction.status}">${t(transaction.status)}</span></div>
-      <dl><div><dt>${t('planned')}</dt><dd>${sharePhrase(transaction.shares, 'standalone', holding)}${getLocale() === 'ru' ? '' : ` ${t('sharesSuffix')}`} @ ${formatCurrency(transaction.price, holding)}</dd></div><div><dt>${t('fee')}</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>${t('executionDate')}</dt><dd>${transaction.executionDate ? formatDateTime(transaction.executionDate) : t('notRecorded')}</dd></div><div><dt>${t('applied')}</dt><dd>${transaction.appliedAt ? t('applied') : t('notApplied')}</dd></div></dl>
+      <dl><div><dt>${label}</dt><dd>${quantityPricePhrase('transaction', effective.shares, effective.price, holding)}</dd></div><div><dt>${t('fee')}</dt><dd>${feeLabel({ mode: transaction.feeMode ?? 'percent', value: transaction.feeValue ?? 0 }, holding)}</dd></div><div><dt>${t('executionDate')}</dt><dd>${transaction.executionDate ? formatDateTime(transaction.executionDate) : t('notRecorded')}</dd></div><div><dt>${t('applied')}</dt><dd>${transaction.appliedAt ? t('applied') : t('notApplied')}</dd></div></dl>
       <div class="ladder-edit-grid"><label class="field"><span>${t('actualPrice')}</span><input data-execution-price="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionPrice ?? transaction.price}" /></label><label class="field"><span>${t('actualShares')}</span><input data-execution-shares="${transaction.id}" type="number" min="0" step="any" value="${transaction.executionShares ?? transaction.shares}" /></label><label class="field"><span>${t('actualFee')}</span><input data-actual-fee="${transaction.id}" type="number" min="0" step="any" value="${transaction.actualFee ?? ''}" placeholder="${t('usePlanned')}" /></label><label class="field"><span>${t('executionDate')}</span><input data-execution-date="${transaction.id}" type="datetime-local" value="${transaction.executionDate ?? ''}" /></label></div>
       <label class="field"><span>${t('note')}</span><input data-transaction-note="${transaction.id}" type="text" value="${escapeHtml(transaction.note ?? '')}" placeholder="${t('optionalNote')}" /></label>
       <label class="field"><span>${t('brokerAccount')}</span><input data-broker-label="${transaction.id}" type="text" value="${escapeHtml(transaction.brokerLabel ?? '')}" placeholder="${t('optionalLabel')}" /></label>
       <div class="button-row"><button class="text-button" data-transaction-status="${transaction.id}" data-status="planned">${t('planned')}</button><button class="text-button" data-transaction-status="${transaction.id}" data-status="executed">${t('executed')}</button><button class="text-button danger-text" data-transaction-status="${transaction.id}" data-status="cancelled">${t('cancelled')}</button></div>
-    </article>`).join('')}</div>`;
+    </article>`;
+  }).join('')}</div>`;
 }
 
 function scenarioPlannerPanel(holding: HoldingState): string {
@@ -1168,14 +1182,14 @@ function executionApplicationPanel(scenario: Scenario, holding: HoldingState): s
 
 function savedScenariosPanel(holding: HoldingState): string {
   const scenarios = scenarioForActiveHolding();
-  return `<section id="saved-scenarios" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('savedScenarios')}</span><h2>${t('comparePlansSafely')}</h2></div><div class="heading-actions">${contextualHelpLink('saved-scenarios')}<div class="button-row"><button id="newScenario" class="secondary-button">${t('newScenario')}</button><button id="savePlanScenario" class="secondary-button">${t('saveCurrentPlan')}</button></div></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${t(scenario.status)}</span></div><p>${escapeHtml(scenario.note || t('noNote'))}</p><dl><div><dt>${t('finalPosition')}</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)} @ ${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">${t('load')}</button><button class="text-button" data-duplicate-scenario="${scenario.id}">${t('duplicate')}</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? t('restore') : t('archive')}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">${t('delete')}</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> ${t('compare')}</label></div></article>`; }).join('')}</div>` : `<div class="empty-state">${t('noSavedScenarios')}</div>`}</section>`;
+  return `<section id="saved-scenarios" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('savedScenarios')}</span><h2>${t('comparePlansSafely')}</h2></div><div class="heading-actions">${contextualHelpLink('saved-scenarios')}<div class="button-row"><button id="newScenario" class="secondary-button">${t('newScenario')}</button><button id="savePlanScenario" class="secondary-button">${t('saveCurrentPlan')}</button></div></div></div>${scenarios.length ? `<div class="saved-scenario-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card ${scenario.status === 'archived' ? 'archived' : ''}"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><span class="status-tag ${scenario.status}">${t(scenario.status)}</span></div><p>${escapeHtml(scenario.note || t('noNote'))}</p><dl><div><dt>${t('finalPosition')}</dt><dd>${quantityPricePhrase('average', summary.finalPosition.shares, summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd class="${summary.totalProjectedProfitLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(summary.totalProjectedProfitLoss, holding)}</dd></div></dl><div class="button-row"><button class="text-button" data-load-scenario="${scenario.id}">${t('load')}</button><button class="text-button" data-duplicate-scenario="${scenario.id}">${t('duplicate')}</button><button class="text-button" data-scenario-archive="${scenario.id}">${scenario.status === 'archived' ? t('restore') : t('archive')}</button><button class="text-button danger-text" data-delete-scenario="${scenario.id}">${t('delete')}</button><label class="compare-check"><input type="checkbox" data-compare-scenario="${scenario.id}" ${store.comparisonScenarioIds.includes(scenario.id) ? 'checked' : ''} ${scenario.status === 'archived' ? 'disabled' : ''} /> ${t('compare')}</label></div></article>`; }).join('')}</div>` : `<div class="empty-state">${t('noSavedScenarios')}</div>`}</section>`;
 }
 
 function comparisonPanel(holding: HoldingState): string {
   const scenarios = store.scenarios
     .filter((scenario) => store.comparisonScenarioIds.includes(scenario.id) && scenario.status !== 'archived')
     .map((scenario) => ({ ...scenario, name: displayScenarioName(scenario.name) }));
-  return `<section id="scenario-comparison" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('compare')}</span><h2>${t('upToFourScenarios')}</h2></div><div class="heading-actions">${contextualHelpLink('scenario-comparison')}<button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? t('hideComparison') : t('showComparison')}</button></div></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="${t('removeFromComparison')}">×</button></div><dl><div><dt>${t('startingPosition')}</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>${t('plannedBuysSells')}</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>${t('totalFees')}</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>${t('finalQuantity')}</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>${t('finalAverage')}</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('marketValue')}</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>${t('unrealizedProfitLoss')}</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>${t('breakEven')}</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>${t('maximumCapitalRequirement')}</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">${t('clearComparison')}</button>` : `<div class="empty-state">${t('comparisonEmpty')}</div>`}</div></section>`;
+  return `<section id="scenario-comparison" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('compare')}</span><h2>${t('upToFourScenarios')}</h2></div><div class="heading-actions">${contextualHelpLink('scenario-comparison')}<button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? t('hideComparison') : t('showComparison')}</button></div></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="${t('removeFromComparison')}">×</button></div><dl><div><dt>${t('startingPosition')}</dt><dd>${quantityPricePhrase('average', summary.startingShares, summary.startingAverage, holding)}</dd></div><div><dt>${t('plannedBuysSells')}</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>${t('totalFees')}</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>${t('finalQuantity')}</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>${t('finalAverage')}</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('marketValue')}</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>${t('unrealizedProfitLoss')}</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>${t('breakEven')}</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>${t('maximumCapitalRequirement')}</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">${t('clearComparison')}</button>` : `<div class="empty-state">${t('comparisonEmpty')}</div>`}</div></section>`;
 }
 
 function dateStamp(): string {
@@ -1504,7 +1518,7 @@ function render(): void {
               <span class="eyebrow">${t('testTransaction')}</span>
               <h2>${isBuy ? t('whatIfBuy', { position: tickerLabel }) : t('whatIfSell', { position: tickerLabel })}</h2>
             </div>
-            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${sharePhrase(analyzablePosition.shares, 'complete', holding)} @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}</div>
+            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${quantityPricePhrase('average', analyzablePosition.shares, analyzablePosition.averagePrice, holding)}</div>` : ''}</div>
           </div>
 
           <div class="segmented-control" aria-label="${t('transactionType')}">
