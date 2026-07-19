@@ -81,6 +81,52 @@ describe('application smoke test', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
   });
 
+  it('renders the current-position preview with complete localized share phrases', () => {
+    const setField = (id: string, value: string): void => {
+      const input = document.querySelector<HTMLInputElement>(`#${id}`);
+      if (!input) throw new Error(`Missing ${id}`);
+      input.value = value;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const currentPositionText = (): string => document.querySelector('.position-pill')?.textContent ?? '';
+
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    const russianCases: Array<[string, string]> = [
+      ['1', '1 акция'], ['2', '2 акции'], ['5', '5 акций'],
+      ['21', '21 акция'], ['22', '22 акции'], ['25', '25 акций'],
+      ['1.5', '1,5 акции'], ['0.25', '0,25 акции'],
+    ];
+    for (const [shares, expected] of russianCases) {
+      setField('shareStep', shares.includes('.') ? '0.01' : '1');
+      setField('baseShares', shares);
+      setField('baseAverage', '50');
+      const text = currentPositionText();
+      expect(text).toContain(`${expected} @`);
+      expect(text.split(expected)).toHaveLength(2);
+      expect(text).toContain('50,00');
+      expect(text).toContain('$');
+      expect(text).not.toMatch(/(?:акция|акции|акций)\s+(?:акция|акции|акций)/);
+      if (['1', '2', '21', '22', '1.5', '0.25'].includes(shares)) {
+        expect(text).not.toContain(`${shares.replace('.', ',')} акций`);
+      }
+    }
+
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+    const englishCases: Array<[string, string]> = [['1', '1 share'], ['2', '2 shares']];
+    for (const [shares, expected] of englishCases) {
+      setField('shareStep', '1');
+      setField('baseShares', shares);
+      setField('baseAverage', '50');
+      const text = currentPositionText();
+      expect(text).toContain(`${expected} @`);
+      expect(text.split(expected)).toHaveLength(2);
+      expect(text).toContain('$50.00');
+    }
+
+    setField('baseShares', '100');
+    setField('baseAverage', '50');
+  });
+
   it('renders complete Russian singular, plural, and fractional Buy summaries', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
     const setField = (id: string, value: string): void => {

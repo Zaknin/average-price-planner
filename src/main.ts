@@ -445,8 +445,13 @@ function countPhrase(value: number, one: string, few: string, many: string, frac
   return `${formatted} ${Number.isInteger(value) ? plural(value, one, few, many) : fractional}`;
 }
 
-function sharePhrase(value: number, context: 'standalone' | 'genitive' = 'standalone', holding = activeHolding()): string {
-  if (getLocale() !== 'ru') return formatQuantity(value, holding);
+function sharePhrase(value: number, context: 'standalone' | 'genitive' | 'complete' = 'standalone', holding = activeHolding()): string {
+  if (getLocale() !== 'ru') {
+    const formatted = formatQuantity(value, holding);
+    return context === 'complete'
+      ? `${formatted} ${plural(value, 'share', t('sharesSuffix'), t('sharesSuffix'))}`
+      : formatted;
+  }
   return context === 'genitive'
     ? countPhrase(value, 'акции', 'акций', 'акций', 'акции')
     : countPhrase(value, 'акция', 'акции', 'акций', 'акции');
@@ -1499,7 +1504,7 @@ function render(): void {
               <span class="eyebrow">${t('testTransaction')}</span>
               <h2>${isBuy ? t('whatIfBuy', { position: tickerLabel }) : t('whatIfSell', { position: tickerLabel })}</h2>
             </div>
-            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${formatQuantity(analyzablePosition.shares)} ${t('sharesSuffix')} @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}</div>
+            <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${sharePhrase(analyzablePosition.shares, 'complete', holding)} @ ${formatCurrency(analyzablePosition.averagePrice)}</div>` : ''}</div>
           </div>
 
           <div class="segmented-control" aria-label="${t('transactionType')}">
