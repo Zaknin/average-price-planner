@@ -79,6 +79,11 @@ describe('Russian editorial parity', () => {
     for (const deprecated of ['архивный»', 'ручная цена «что если»', 'рабочее пространство']) expect(glossary).not.toContain(deprecated);
   });
 
+  it('retains bilingual glossary aliases after ordinary UI labels become Russian-only', () => {
+    const glossary = helpTopicSearchText(russianTopics.find((topic) => topic.slug === 'glossary')!).toLowerCase();
+    for (const alias of ['market value', 'cost basis', 'break-even', 'dca level', 'stress test']) expect(glossary).toContain(alias);
+  });
+
   it('keeps the final Russian Help wording corrections in rendered content', () => {
     const textFor = (slug: string): string => helpTopicSearchText(russianTopics.find((topic) => topic.slug === slug)!);
     expect(textFor('getting-started')).toContain('пошаговый путь от создания позиции до сохранения резервной копии данных');

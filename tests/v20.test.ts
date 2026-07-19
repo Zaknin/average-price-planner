@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { t } from '../src/i18n';
 
 const STORE_KEY = 'average-down-optimizer:v2';
 
@@ -88,5 +89,31 @@ describe('v2.0 Russian quantity and price summaries', () => {
     expect(document.querySelector('.position-pill')?.textContent).toContain('1 share @ $50.00');
     expect(document.querySelector('#market-snapshot')?.textContent).toContain('1 share @ $55.00');
     expect(document.querySelector('.scenario-transaction-cards')?.textContent).toContain('2 shares @ $45.00');
+  });
+
+  it('renders ordinary Russian UI labels without English parenthetical aliases', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    const ordinaryUi = document.querySelector('main')?.textContent ?? '';
+    for (const label of [
+      'Рыночная стоимость', 'Средняя цена', 'Себестоимость позиции', 'Цена безубыточности',
+      'Нереализованный P/L', 'Итоговый P/L', 'Лестница DCA',
+      'Стресс-тест', 'Целевая средняя цена', 'Планировщик сценариев', 'Обратный расчёт продажи',
+    ]) expect(ordinaryUi).toContain(label);
+    expect(t('realizedProfitLoss')).toBe('Реализованный P/L');
+    for (const hybrid of [
+      'Market value (', 'Average price (', 'Cost basis (', 'Break-even (', 'Realized P/L (',
+      'Unrealized P/L (', 'Total P/L (', 'DCA Ladder (', 'Stress test (',
+    ]) expect(ordinaryUi).not.toContain(hybrid);
+  });
+
+  it('keeps representative English UI labels unchanged', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+    expect(t('marketValue')).toBe('Market value');
+    expect(t('averageBuyPrice')).toBe('Average buy price');
+    expect(t('costBasis')).toBe('Cost basis');
+    expect(t('breakEvenPrice')).toBe('Break-even price');
+    expect(t('realizedProfitLoss')).toBe('Realized P/L');
+    expect(t('dcaLadder')).toBe('DCA Ladder');
+    expect(t('stressTests')).toBe('Stress tests');
   });
 });
