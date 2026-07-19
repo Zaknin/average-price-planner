@@ -1414,8 +1414,17 @@ function render(): void {
   const analyzablePosition = position && isFinitePositive(position.shares) && isFinitePositive(position.averagePrice)
     ? position
     : null;
+  const positionDisplayName = holding.ticker.trim();
+  const hasPositionDisplayName = positionDisplayName.length > 0;
   const tickerLabel = escapeHtml(holding.ticker || t('thisPosition'));
   const isBuy = holding.action === 'buy';
+  const transactionHeading = isBuy
+    ? hasPositionDisplayName
+      ? t('whatIfBuy', { position: escapeHtml(holding.ticker) })
+      : t('whatIfBuyUnnamed')
+    : hasPositionDisplayName
+      ? t('whatIfSell', { position: escapeHtml(holding.ticker) })
+      : t('whatIfSellUnnamed');
   const transactionFee = activeFee(holding);
   const validTransaction = Boolean(
     analyzablePosition
@@ -1511,7 +1520,7 @@ function render(): void {
           <div class="section-heading action-heading">
             <div>
               <span class="eyebrow">${t('testTransaction')}</span>
-              <h2>${isBuy ? t('whatIfBuy', { position: tickerLabel }) : t('whatIfSell', { position: tickerLabel })}</h2>
+              <h2>${transactionHeading}</h2>
             </div>
             <div class="heading-actions">${contextualHelpLink('buy-sell')}${analyzablePosition ? `<div class="position-pill">${quantityPricePhrase('average', analyzablePosition.shares, analyzablePosition.averagePrice, holding)}</div>` : ''}</div>
           </div>

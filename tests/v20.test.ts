@@ -130,6 +130,60 @@ describe('v2.0 Russian quantity and price summaries', () => {
     expect(t('browserDataNotice')).toBe('Everything stays in this browser. Different website origins keep separate browser data.');
   });
 
+  it('renders named and unnamed Buy and Sell headings without changing stored names', () => {
+    const setTicker = (value: string): void => {
+      const input = document.querySelector<HTMLInputElement>('#ticker');
+      if (!input) throw new Error('Missing ticker input');
+      input.value = value;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const heading = (): string => document.querySelector('#transaction h2')?.textContent ?? '';
+    const selectAction = (action: 'buy' | 'sell'): void => document.querySelector<HTMLButtonElement>(`[data-action="${action}"]`)?.click();
+    const storedTicker = (): string => JSON.parse(localStorage.getItem(STORE_KEY) ?? '{}').holdings[0].ticker;
+
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    setTicker('');
+    expect(heading()).toBe('Что будет, если докупить акции в текущую позицию?');
+    selectAction('sell');
+    expect(heading()).toBe('Что будет, если продать часть текущей позиции?');
+
+    setTicker('   ');
+    selectAction('buy');
+    expect(heading()).toBe('Что будет, если докупить акции в текущую позицию?');
+    selectAction('sell');
+    expect(heading()).toBe('Что будет, если продать часть текущей позиции?');
+    expect(heading()).not.toMatch(/в позицию «этой позиции»|часть позиции «этой позиции»|«текущей позиции»|позицию позицию|позиции позиции/);
+
+    setTicker('AAPL');
+    selectAction('buy');
+    expect(heading()).toBe('Что будет, если докупить акции в позицию «AAPL»?');
+    expect(heading().match(/AAPL/g)).toHaveLength(1);
+    selectAction('sell');
+    expect(heading()).toBe('Что будет, если продать часть позиции «AAPL»?');
+    expect(heading().match(/AAPL/g)).toHaveLength(1);
+    expect(storedTicker()).toBe('AAPL');
+
+    setTicker('LONG-NAMED-POSITION-123');
+    selectAction('buy');
+    expect(heading()).toBe('Что будет, если докупить акции в позицию «LONG-NAMED-POSITION-123»?');
+    expect(storedTicker()).toBe('LONG-NAMED-POSITION-123');
+
+    setTicker('');
+    document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();
+    expect(heading()).toBe('What if you buy more this position?');
+    selectAction('sell');
+    expect(heading()).toBe('What if you sell some this position?');
+    setTicker('AAPL');
+    selectAction('buy');
+    expect(heading()).toBe('What if you buy more AAPL?');
+    selectAction('sell');
+    expect(heading()).toBe('What if you sell some AAPL?');
+    expect(storedTicker()).toBe('AAPL');
+
+    selectAction('buy');
+    setTicker('TEST');
+  });
+
   it('renders Russian backup and plan CSV notices after successful exports', () => {
     document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
 

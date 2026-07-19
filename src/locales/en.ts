@@ -96,6 +96,8 @@ export const en = {
   positionLabel: 'Position',
   whatIfBuy: 'What if you buy more {position}?',
   whatIfSell: 'What if you sell some {position}?',
+  whatIfBuyUnnamed: 'What if you buy more this position?',
+  whatIfSellUnnamed: 'What if you sell some this position?',
   positionSnapshot: 'Position snapshot',
   buildBeforeChanging: 'Build before changing your position',
   comparePlansSafely: 'Compare plans safely',

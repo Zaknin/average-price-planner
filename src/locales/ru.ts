@@ -97,6 +97,8 @@ export const ru: Record<TranslationKey, string> = {
   positionLabel: 'Позиция',
   whatIfBuy: 'Что будет, если докупить акции в позицию «{position}»?',
   whatIfSell: 'Что будет, если продать часть позиции «{position}»?',
+  whatIfBuyUnnamed: 'Что будет, если докупить акции в текущую позицию?',
+  whatIfSellUnnamed: 'Что будет, если продать часть текущей позиции?',
   positionSnapshot: 'Сводка по позиции',
   buildBeforeChanging: 'Проверьте расчёт до изменения позиции',
   comparePlansSafely: 'Сравнивайте варианты, не изменяя позицию',
