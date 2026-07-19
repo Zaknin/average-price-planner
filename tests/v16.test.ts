@@ -124,9 +124,9 @@ describe('backup and CSV data utilities', () => {
   });
 
   it('rejects malformed, unsafe, and invalid backup data before mutation', () => {
-    expect(() => parseBackupJson('not json')).toThrow('not valid JSON');
-    expect(() => parseBackupJson(JSON.stringify({ application: 'Average Price Planner', backupSchemaVersion: 1, applicationVersion: '1.6.0', exportedAt: 'now', scope: 'all', positions: [{ ...backupPosition(), baseShares: -1 }] }))).toThrow('baseShares');
-    expect(() => parseBackupJson('{"application":"Average Price Planner","backupSchemaVersion":1,"applicationVersion":"1.6.0","exportedAt":"now","scope":"all","__proto__":{},"positions":[]}')).toThrow('unsafe');
+    expect(() => parseBackupJson('not json')).toThrow('backup.invalidJson');
+    expect(() => parseBackupJson(JSON.stringify({ application: 'Average Price Planner', backupSchemaVersion: 1, applicationVersion: '1.6.0', exportedAt: 'now', scope: 'all', positions: [{ ...backupPosition(), baseShares: -1 }] }))).toThrow('backup.invalidNumericValue');
+    expect(() => parseBackupJson('{"application":"Average Price Planner","backupSchemaVersion":1,"applicationVersion":"1.6.0","exportedAt":"now","scope":"all","__proto__":{},"positions":[]}')).toThrow('backup.unsafeObjectKey');
   });
 
   it('merges colliding identifiers without overwriting current positions', () => {

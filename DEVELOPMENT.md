@@ -18,7 +18,8 @@ npm run build
 - `src/main.ts` orchestrates calculator UI and browser-local state.
 - `src/calculator.ts` contains fee-aware transaction arithmetic.
 - `src/domain.ts` and `src/planner.ts` contain scenarios and planning helpers.
-- `src/data.ts` validates backup and CSV data.
+- `src/version.ts` is the single build-time application-version source; UI release labels and JSON backup `applicationVersion` metadata must use it.
+- `src/data.ts` validates backup and CSV data. Backup validation returns stable, language-neutral error codes; the UI localizes those codes at the presentation boundary.
 - `src/help-types.ts` defines the typed, language-ready Help block model.
 - `src/i18n.ts` owns the `en` / `ru` preference, `Intl` formatting, interpolation, plural selection, document metadata, and English fallback. The preference key is separate from the portfolio store and backups.
 - `src/locales/` contains interface translations; `src/help-content.ts` and `src/help-content.ru.ts` contain the English and Russian topic catalogs.
@@ -59,7 +60,7 @@ Test complete rendered Russian sentences, not only a noun helper. Cover 1, 2, 5,
 
 Use `Intl.NumberFormat`, `Intl.DateTimeFormat`, and `Intl.PluralRules` through `i18n.ts` for display values. `parseLocalizedDecimal()` accepts either a Russian decimal comma or a decimal point in supported numeric inputs and rejects ambiguous grouping/separator formats. Convert the result to a number before calculations; do not localize values retained in state.
 
-The portfolio store remains schema v4 and the backup document remains schema v2. Locale preference uses `average-price-planner:locale`, separately from `average-down-optimizer:v2`, and is excluded from JSON backups. JSON and CSV preserve their canonical numeric, enum, date, and UTF-8/BOM formats regardless of UI locale.
+The portfolio store remains schema v4 and the backup document remains schema v2. Locale preference uses `average-price-planner:locale`, separately from `average-down-optimizer:v2`, and is excluded from JSON backups. JSON and CSV preserve their canonical numeric, enum, date, and UTF-8/BOM formats regardless of UI locale. Backup `applicationVersion` is informational and must not change import compatibility. New backup-validation codes require English/Russian catalog entries plus tests for the code and both rendered messages. Persist empty scenario names when the user has not supplied one; render the localized fallback only in the UI. The EN/RU control is a bilingual labelled button group with exactly one `aria-pressed="true"` button after every render.
 
 ## GitHub Pages
 

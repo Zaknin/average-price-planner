@@ -71,6 +71,11 @@ describe('application smoke test', () => {
     expect(document.documentElement.lang).toBe('ru');
     expect(document.body.textContent).toContain('Планировщик средней цены');
     expect(document.body.textContent).toContain('Расчёт операции');
+    expect(document.querySelector('.release-tag')?.textContent).toBe('v1.9.7');
+    expect(document.querySelector('.locale-control')?.getAttribute('aria-label')).toBe('Language / Язык');
+    expect(document.querySelector('[data-locale="en"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(document.querySelector('[data-locale="ru"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(document.querySelectorAll('[data-locale][aria-pressed="true"]')).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem('average-down-optimizer:v2') ?? '{}')).toEqual(before);
     expect(localStorage.getItem('average-price-planner:locale')).toBe('ru');
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click();

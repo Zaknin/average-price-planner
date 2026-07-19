@@ -104,6 +104,9 @@ describe('Help Center content and routes', () => {
     expect(app.textContent).toContain('Как читать результаты');
     expect(app.textContent).toContain('Сумма до комиссии');
     expect(app.querySelector('[data-locale="ru"]')?.classList.contains('active')).toBe(true);
+    expect(app.querySelector('.locale-control')?.getAttribute('aria-label')).toBe('Language / Язык');
+    expect(app.querySelector('[data-locale="ru"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(app.querySelector('[data-locale="en"]')?.getAttribute('aria-pressed')).toBe('false');
 
     renderHelp(app, 'home', { backToCalculator: vi.fn() });
     const search = app.querySelector<HTMLInputElement>('#helpSearch')!;

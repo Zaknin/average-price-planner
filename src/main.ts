@@ -28,6 +28,8 @@ import {
   type BackupDocument,
   type BackupPosition,
 } from './data';
+import { backupImportMessage } from './backup-errors';
+import { displayScenarioName } from './scenario-display';
 import type { DcaLadder, PlannerMessageCode, Scenario, ScenarioStatus, ScenarioTransaction, StressPrice } from './domain';
 import {
   activeLadderFee,
@@ -41,6 +43,7 @@ import {
 } from './planner';
 import { helpHash, helpRouteFromHash, renderHelp } from './help';
 import { formatCurrency as formatLocalizedCurrency, formatDateTime, formatNumber as formatLocalizedNumber, formatPercent, getLocale, initializeLocale, parseLocalizedDecimal, plural, setLocale, t, type Locale } from './i18n';
+import { APP_VERSION } from './version';
 
 type HoldingState = {
   id: string;
@@ -222,7 +225,7 @@ function normalizeScenario(value: Partial<Scenario>, fallbackHoldingId: string):
   return {
     id: value.id,
     holdingId: typeof value.holdingId === 'string' && value.holdingId ? value.holdingId : fallbackHoldingId,
-    name: typeof value.name === 'string' ? value.name.slice(0, 120) : 'Untitled scenario',
+    name: typeof value.name === 'string' ? value.name.trim().slice(0, 120) : '',
     note: typeof value.note === 'string' ? value.note.slice(0, 1000) : '',
     status: value.status === 'active' || value.status === 'completed' || value.status === 'archived' ? value.status : 'draft',
     createdAt,
@@ -472,10 +475,16 @@ function plannerMessage(code: PlannerMessageCode | null | undefined): string {
   return code ? t(key[code]) : t('invalidReverseSell');
 }
 
+function localeSelector(): string {
+  const locale = getLocale();
+  return `<div class="locale-control" role="group" aria-label="Language / Язык"><button type="button" data-locale="en" aria-label="English" aria-pressed="${locale === 'en'}" class="${locale === 'en' ? 'active' : ''}">EN</button><button type="button" data-locale="ru" aria-label="Русский" aria-pressed="${locale === 'ru'}" class="${locale === 'ru' ? 'active' : ''}">RU</button></div>`;
+}
+
 function changeLocale(locale: Locale): void {
   captureInputDrafts();
   setLocale(locale);
   render();
+  document.querySelector<HTMLButtonElement>(`[data-locale="${locale}"]`)?.focus();
 }
 
 function escapeHtml(value: string): string {
@@ -979,7 +988,9 @@ function dataManagementPanel(holding: HoldingState): string {
 }
 
 function scenarioForActiveHolding(): Scenario[] {
-  return store.scenarios.filter((scenario) => scenario.holdingId === activeHolding().id);
+  return store.scenarios
+    .filter((scenario) => scenario.holdingId === activeHolding().id)
+    .map((scenario) => ({ ...scenario, name: displayScenarioName(scenario.name) }));
 }
 
 function loadedScenario(): Scenario | null {
@@ -1156,7 +1167,9 @@ function savedScenariosPanel(holding: HoldingState): string {
 }
 
 function comparisonPanel(holding: HoldingState): string {
-  const scenarios = store.scenarios.filter((scenario) => store.comparisonScenarioIds.includes(scenario.id) && scenario.status !== 'archived');
+  const scenarios = store.scenarios
+    .filter((scenario) => store.comparisonScenarioIds.includes(scenario.id) && scenario.status !== 'archived')
+    .map((scenario) => ({ ...scenario, name: displayScenarioName(scenario.name) }));
   return `<section id="scenario-comparison" class="panel"><div class="section-heading"><div><span class="eyebrow">${t('compare')}</span><h2>${t('upToFourScenarios')}</h2></div><div class="heading-actions">${contextualHelpLink('scenario-comparison')}<button id="toggleComparison" class="text-button" aria-expanded="${comparisonExpanded}">${comparisonExpanded ? t('hideComparison') : t('showComparison')}</button></div></div><div class="disclosure-content ${comparisonExpanded ? 'is-expanded' : ''}">${scenarios.length ? `<div class="comparison-cards">${scenarios.map((scenario) => { const summary = summarizeScenario(scenario, holding.sellFee); return `<article class="scenario-card"><div class="scenario-card-heading"><strong>${escapeHtml(scenario.name)}</strong><button class="icon-button" data-remove-comparison="${scenario.id}" aria-label="${t('removeFromComparison')}">×</button></div><dl><div><dt>${t('startingPosition')}</dt><dd>${formatQuantity(summary.startingShares, holding)} @ ${formatCurrency(summary.startingAverage, holding)}</dd></div><div><dt>${t('plannedBuysSells')}</dt><dd>${formatQuantity(summary.plannedBuyShares, holding)} / ${formatQuantity(summary.plannedSellShares, holding)}</dd></div><div><dt>${t('totalFees')}</dt><dd>${formatCurrency(summary.totalFees, holding)}</dd></div><div><dt>${t('finalQuantity')}</dt><dd>${formatQuantity(summary.finalPosition.shares, holding)}</dd></div><div><dt>${t('finalAverage')}</dt><dd>${formatCurrency(summary.finalPosition.averagePrice, holding)}</dd></div><div><dt>${t('marketValue')}</dt><dd>${formatCurrency(summary.marketValue, holding)}</dd></div><div><dt>${t('totalProfitLoss')}</dt><dd>${formatCurrency(summary.realizedProfitLoss, holding)}</dd></div><div><dt>${t('unrealizedProfitLoss')}</dt><dd>${formatCurrency(summary.unrealizedProfitLoss, holding)}</dd></div><div><dt>${t('breakEven')}</dt><dd>${formatCurrency(summary.breakEvenPrice, holding)}</dd></div><div><dt>${t('maximumCapitalRequirement')}</dt><dd>${formatCurrency(summary.maximumCapitalRequirement, holding)}</dd></div></dl></article>`; }).join('')}</div><button id="clearComparison" class="text-button">${t('clearComparison')}</button>` : `<div class="empty-state">${t('comparisonEmpty')}</div>`}</div></section>`;
 }
 
@@ -1404,11 +1417,11 @@ function render(): void {
       <div class="brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>${t('documentTitle')} <span class="release-tag">v1.9.6</span></h1>
+          <h1>${t('documentTitle')} <span class="release-tag">v${APP_VERSION}</span></h1>
           <p>${t('appTagline')}</p>
         </div>
       </div>
-      <div class="header-actions"><div class="locale-control" role="group" aria-label="${t('language')}"><button type="button" data-locale="en" class="${getLocale() === 'en' ? 'active' : ''}">${t('english')}</button><button type="button" data-locale="ru" class="${getLocale() === 'ru' ? 'active' : ''}">${t('russian')}</button></div><div class="privacy-badge"><span></span> ${t('savedOnlyHere')}</div></div>
+      <div class="header-actions">${localeSelector()}<div class="privacy-badge"><span></span> ${t('savedOnlyHere')}</div></div>
     </header>
 
     <main class="layout">
@@ -1705,12 +1718,11 @@ function wireEvents(): void {
     const file = (event.currentTarget as HTMLInputElement).files?.[0];
     if (!file) return;
     try {
-      if (file.size > 5 * 1024 * 1024) throw new Error(t('importTooLarge'));
       pendingImport = parseBackupJson(await file.text());
       notice = t('backupChecked');
     } catch (error) {
       pendingImport = null;
-      notice = error instanceof Error ? error.message : t('importRejected');
+      notice = backupImportMessage(error);
     }
     render();
   });
@@ -1838,7 +1850,7 @@ function wireEvents(): void {
     if (!source) return;
     const timestamp = new Date().toISOString();
     const copy: Scenario = JSON.parse(JSON.stringify(source)) as Scenario;
-    copy.id = createId(); copy.name = t('copiedScenarioName', { name: source.name }); copy.status = 'draft'; copy.createdAt = timestamp; copy.updatedAt = timestamp;
+    copy.id = createId(); copy.name = t('copiedScenarioName', { name: displayScenarioName(source.name) }); copy.status = 'draft'; copy.createdAt = timestamp; copy.updatedAt = timestamp;
     copy.transactions = copy.transactions.map((transaction, index) => ({ ...transaction, id: createId(), appliedAt: undefined, createdAt: timestamp, updatedAt: timestamp, createdOrder: index }));
     copy.ladder = copy.ladder ? { ...copy.ladder, levels: copy.ladder.levels.map((level) => ({ ...level, id: createId() })) } : null;
     store.scenarios.push(copy); loadedScenarioId = copy.id; scenarioPanelExpanded = true; saveStore(); notice = t('scenarioDuplicated'); render();
@@ -1880,7 +1892,7 @@ function wireEvents(): void {
       apply((event.currentTarget as HTMLInputElement | HTMLSelectElement).value); touchScenario(current); render();
     });
   };
-  updateScenarioField('scenarioName', (value) => { const current = loadedScenario(); if (current) current.name = value.trim() || 'Untitled scenario'; });
+  updateScenarioField('scenarioName', (value) => { const current = loadedScenario(); if (current) current.name = value.trim(); });
   updateScenarioField('scenarioStatus', (value) => { const current = loadedScenario(); if (current) { current.status = (['draft', 'active', 'completed', 'archived'] as string[]).includes(value) ? value as ScenarioStatus : 'draft'; if (current.status === 'archived') store.comparisonScenarioIds = store.comparisonScenarioIds.filter((id) => id !== current.id); } });
   updateScenarioField('scenarioMarketPrice', (value) => { const current = loadedScenario(); if (current) current.marketPrice = nonNegative(value); });
   updateScenarioField('scenarioNote', (value) => { const current = loadedScenario(); if (current) current.note = value; });

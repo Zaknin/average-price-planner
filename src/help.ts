@@ -1,5 +1,6 @@
 import { findHelpTopic, getHelpTopics, helpGroups, helpTopicSearchText, type HelpBlock, type HelpTopic } from './help-content';
 import { getLocale, t, type Locale } from './i18n';
+import { APP_VERSION } from './version';
 
 export type HelpRoute = 'home' | string;
 
@@ -70,10 +71,15 @@ function topicContent(topic: HelpTopic): string {
   return `<article class="help-article" aria-labelledby="helpArticleTitle"><p class="eyebrow">${escapeHtml(groupLabel(topic.group))}</p><h1 id="helpArticleTitle" tabindex="-1">${escapeHtml(topic.title)}</h1><p class="help-lead">${escapeHtml(topic.summary)}</p><div class="help-topic-content">${topic.blocks.map(renderHelpBlock).join('')}</div><footer class="help-related"><button type="button" class="secondary-button" data-help-return-section="${topic.relatedSection}">${t('returnToCalculatorSection')}</button></footer></article>`;
 }
 
+function localeSelector(): string {
+  const locale = getLocale();
+  return `<div class="locale-control" role="group" aria-label="Language / Язык"><button type="button" data-locale="en" aria-label="English" aria-pressed="${locale === 'en'}" class="${locale === 'en' ? 'active' : ''}">EN</button><button type="button" data-locale="ru" aria-label="Русский" aria-pressed="${locale === 'ru'}" class="${locale === 'ru' ? 'active' : ''}">RU</button></div>`;
+}
+
 export function renderHelp(app: HTMLDivElement, route: HelpRoute, callbacks: HelpCallbacks, query = ''): void {
   const activeTopic = route === 'home' ? undefined : findHelpTopic(route, getLocale());
   const effectiveRoute = activeTopic ? route : 'home';
-  app.innerHTML = `<header class="topbar"><div class="brand"><span class="brand-mark" aria-hidden="true">A</span><div><h1>${t('documentTitle')} <span class="release-tag">v1.9.6</span></h1><p>${t('helpCenter')}</p></div></div><div class="header-actions"><div class="locale-control" role="group" aria-label="${t('language')}"><button type="button" data-locale="en" class="${getLocale() === 'en' ? 'active' : ''}">${t('english')}</button><button type="button" data-locale="ru" class="${getLocale() === 'ru' ? 'active' : ''}">${t('russian')}</button></div><button id="helpBackTop" class="secondary-button">${t('backToCalculator')}</button></div></header><main class="help-layout"><aside class="help-sidebar"><button id="helpBack" class="secondary-button help-back">← ${t('backToCalculator')}</button><nav aria-label="${t('browseHelpTopics')}"><div class="help-mobile-nav"><button id="toggleHelpTopics" class="text-button" aria-expanded="false" aria-controls="helpTopicNavigation">${t('browseHelpTopics')}</button></div><div id="helpTopicNavigation" class="help-topic-navigation">${topicNavigation(effectiveRoute)}</div></nav></aside><main class="help-main">${effectiveRoute === 'home' ? homeContent(query) : topicContent(activeTopic!)}</main></main>`;
+  app.innerHTML = `<header class="topbar help-topbar"><div class="brand"><span class="brand-mark" aria-hidden="true">A</span><div><h1>${t('documentTitle')} <span class="release-tag">v${APP_VERSION}</span></h1><p>${t('helpCenter')}</p></div></div><div class="header-actions">${localeSelector()}<button id="helpBackTop" class="secondary-button">${t('backToCalculator')}</button></div></header><main class="help-layout"><aside class="help-sidebar"><button id="helpBack" class="secondary-button help-back">← ${t('backToCalculator')}</button><nav aria-label="${t('browseHelpTopics')}"><div class="help-mobile-nav"><button id="toggleHelpTopics" class="text-button" aria-expanded="false" aria-controls="helpTopicNavigation">${t('browseHelpTopics')}</button></div><div id="helpTopicNavigation" class="help-topic-navigation">${topicNavigation(effectiveRoute)}</div></nav></aside><main class="help-main">${effectiveRoute === 'home' ? homeContent(query) : topicContent(activeTopic!)}</main></main>`;
 
   const goBack = (): void => callbacks.backToCalculator();
   app.querySelector<HTMLButtonElement>('#helpBack')?.addEventListener('click', goBack);

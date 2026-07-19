@@ -1,11 +1,40 @@
 import type { FeeMode, TransactionType } from './calculator';
+import { APP_VERSION } from './version';
 
 export const BACKUP_SCHEMA_VERSION = 2;
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024;
-export const APP_VERSION = '1.7.0';
 
 export type BackupScope = 'all' | 'active';
 export type BackupPosition = Record<string, unknown>;
+
+export type BackupValidationErrorCode =
+  | 'backup.invalidJson'
+  | 'backup.invalidRoot'
+  | 'backup.metadataIncomplete'
+  | 'backup.unsupportedSchema'
+  | 'backup.unsafeObjectKey'
+  | 'backup.invalidPosition'
+  | 'backup.invalidScenario'
+  | 'backup.invalidTransaction'
+  | 'backup.invalidTransactionType'
+  | 'backup.invalidNumericValue'
+  | 'backup.fileTooLarge';
+
+export class BackupValidationError extends Error {
+  readonly code: BackupValidationErrorCode;
+  readonly values?: Record<string, string | number>;
+
+  constructor(code: BackupValidationErrorCode, values?: Record<string, string | number>) {
+    super(code);
+    this.name = 'BackupValidationError';
+    this.code = code;
+    this.values = values;
+  }
+}
+
+export function isBackupValidationError(error: unknown): error is BackupValidationError {
+  return error instanceof BackupValidationError;
+}
 
 export interface BackupDocument {
   application: 'Average Price Planner';
@@ -35,7 +64,7 @@ function safeClone(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const clone: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (blockedKeys.has(key)) throw new Error('Import rejected: unsafe object key.');
+    if (blockedKeys.has(key)) throw new BackupValidationError('backup.unsafeObjectKey');
     clone[key] = safeClone(item);
   }
   return clone;
@@ -52,28 +81,28 @@ function validFee(value: unknown): boolean {
 }
 
 function validTransaction(value: unknown, index: number): value is Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`Import rejected: transaction ${index + 1} is not an object.`);
-  if (value.type !== 'buy' && value.type !== 'sell') throw new Error(`Import rejected: transaction ${index + 1} has an invalid type.`);
-  if (!(typeof value.shares === 'number' && Number.isFinite(value.shares) && value.shares > 0)) throw new Error(`Import rejected: transaction ${index + 1} contains a negative or invalid share quantity.`);
-  if (!(typeof value.price === 'number' && Number.isFinite(value.price) && value.price > 0)) throw new Error(`Import rejected: transaction ${index + 1} contains an invalid price.`);
-  if (value.feeMode !== undefined && value.feeMode !== 'percent' && value.feeMode !== 'fixed') throw new Error(`Import rejected: transaction ${index + 1} has an invalid fee mode.`);
-  if (value.feeValue !== undefined && !isFiniteNonNegative(value.feeValue)) throw new Error(`Import rejected: transaction ${index + 1} has an invalid fee value.`);
+  if (!isRecord(value)) throw new BackupValidationError('backup.invalidTransaction', { index: index + 1 });
+  if (value.type !== 'buy' && value.type !== 'sell') throw new BackupValidationError('backup.invalidTransactionType', { index: index + 1 });
+  if (!(typeof value.shares === 'number' && Number.isFinite(value.shares) && value.shares > 0)) throw new BackupValidationError('backup.invalidNumericValue', { index: index + 1 });
+  if (!(typeof value.price === 'number' && Number.isFinite(value.price) && value.price > 0)) throw new BackupValidationError('backup.invalidNumericValue', { index: index + 1 });
+  if (value.feeMode !== undefined && value.feeMode !== 'percent' && value.feeMode !== 'fixed') throw new BackupValidationError('backup.invalidTransaction', { index: index + 1 });
+  if (value.feeValue !== undefined && !isFiniteNonNegative(value.feeValue)) throw new BackupValidationError('backup.invalidNumericValue', { index: index + 1 });
   return true;
 }
 
 export function validateBackupPosition(value: unknown): BackupPosition {
   const position = safeClone(value);
-  if (!isRecord(position) || typeof position.id !== 'string' || !position.id) throw new Error('Import rejected: every position needs an identifier.');
-  if (position.ticker !== undefined && typeof position.ticker !== 'string') throw new Error('Import rejected: a ticker must be text.');
-  if (position.currency !== undefined && typeof position.currency !== 'string') throw new Error('Import rejected: a currency must be text.');
+  if (!isRecord(position) || typeof position.id !== 'string' || !position.id) throw new BackupValidationError('backup.invalidPosition');
+  if (position.ticker !== undefined && typeof position.ticker !== 'string') throw new BackupValidationError('backup.invalidPosition');
+  if (position.currency !== undefined && typeof position.currency !== 'string') throw new BackupValidationError('backup.invalidPosition');
   for (const key of finiteNonNegativeFields) {
-    if (position[key] !== undefined && !isFiniteNonNegative(position[key])) throw new Error(`Import rejected: ${key} must be a finite value of zero or greater.`);
+    if (position[key] !== undefined && !isFiniteNonNegative(position[key])) throw new BackupValidationError('backup.invalidNumericValue');
   }
-  if (position.shareStep !== undefined && Number(position.shareStep) <= 0) throw new Error('Import rejected: shareStep must be greater than zero.');
-  if (position.buyFee !== undefined && !validFee(position.buyFee)) throw new Error('Import rejected: buy fee is invalid.');
-  if (position.sellFee !== undefined && !validFee(position.sellFee)) throw new Error('Import rejected: sell fee is invalid.');
+  if (position.shareStep !== undefined && Number(position.shareStep) <= 0) throw new BackupValidationError('backup.invalidNumericValue');
+  if (position.buyFee !== undefined && !validFee(position.buyFee)) throw new BackupValidationError('backup.invalidPosition');
+  if (position.sellFee !== undefined && !validFee(position.sellFee)) throw new BackupValidationError('backup.invalidPosition');
   if (position.transactions !== undefined) {
-    if (!Array.isArray(position.transactions)) throw new Error('Import rejected: transactions must be a list.');
+    if (!Array.isArray(position.transactions)) throw new BackupValidationError('backup.invalidTransaction');
     position.transactions.forEach(validTransaction);
   }
   return position;
@@ -82,20 +111,20 @@ export function validateBackupPosition(value: unknown): BackupPosition {
 export function validateBackupScenario(value: unknown): BackupPosition {
   const scenario = safeClone(value);
   if (!isRecord(scenario) || typeof scenario.id !== 'string' || !scenario.id || typeof scenario.holdingId !== 'string' || !scenario.holdingId) {
-    throw new Error('Import rejected: every scenario needs an identifier and holding identifier.');
+    throw new BackupValidationError('backup.invalidScenario');
   }
-  if (scenario.name !== undefined && typeof scenario.name !== 'string') throw new Error('Import rejected: a scenario name must be text.');
-  if (scenario.status !== undefined && !['draft', 'active', 'completed', 'archived'].includes(String(scenario.status))) throw new Error('Import rejected: scenario status is invalid.');
+  if (scenario.name !== undefined && typeof scenario.name !== 'string') throw new BackupValidationError('backup.invalidScenario');
+  if (scenario.status !== undefined && !['draft', 'active', 'completed', 'archived'].includes(String(scenario.status))) throw new BackupValidationError('backup.invalidScenario');
   if (!isRecord(scenario.basePosition) || !isFiniteNonNegative(scenario.basePosition.shares) || !isFiniteNonNegative(scenario.basePosition.averagePrice)) {
-    throw new Error('Import rejected: scenario base position is invalid.');
+    throw new BackupValidationError('backup.invalidScenario');
   }
-  if (scenario.marketPrice !== undefined && !isFiniteNonNegative(scenario.marketPrice)) throw new Error('Import rejected: scenario market price is invalid.');
+  if (scenario.marketPrice !== undefined && !isFiniteNonNegative(scenario.marketPrice)) throw new BackupValidationError('backup.invalidNumericValue');
   if (scenario.transactions !== undefined) {
-    if (!Array.isArray(scenario.transactions)) throw new Error('Import rejected: scenario transactions must be a list.');
+    if (!Array.isArray(scenario.transactions)) throw new BackupValidationError('backup.invalidTransaction');
     scenario.transactions.forEach((transaction, index) => {
       validTransaction(transaction, index);
-      if (isRecord(transaction) && transaction.status !== undefined && !['planned', 'executed', 'cancelled'].includes(String(transaction.status))) throw new Error(`Import rejected: transaction ${index + 1} status is invalid.`);
-      if (isRecord(transaction) && transaction.actualFee !== undefined && !isFiniteNonNegative(transaction.actualFee)) throw new Error(`Import rejected: transaction ${index + 1} actual fee is invalid.`);
+      if (isRecord(transaction) && transaction.status !== undefined && !['planned', 'executed', 'cancelled'].includes(String(transaction.status))) throw new BackupValidationError('backup.invalidTransaction', { index: index + 1 });
+      if (isRecord(transaction) && transaction.actualFee !== undefined && !isFiniteNonNegative(transaction.actualFee)) throw new BackupValidationError('backup.invalidNumericValue', { index: index + 1 });
     });
   }
   return scenario;
@@ -117,30 +146,30 @@ export function createBackup(positions: BackupPosition[], activeHoldingId: strin
 
 /** Parses and validates the entire backup before callers are allowed to mutate browser storage. */
 export function parseBackupJson(raw: string): BackupDocument {
-  if (new TextEncoder().encode(raw).byteLength > MAX_BACKUP_BYTES) throw new Error('Import rejected: backup files must be 5 MB or smaller.');
+  if (new TextEncoder().encode(raw).byteLength > MAX_BACKUP_BYTES) throw new BackupValidationError('backup.fileTooLarge');
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('Import rejected: the selected file is not valid JSON.');
+    throw new BackupValidationError('backup.invalidJson');
   }
   const document = safeClone(parsed);
-  if (!isRecord(document) || document.application !== 'Average Price Planner') throw new Error('Import rejected: this is not an Average Price Planner backup.');
+  if (!isRecord(document) || document.application !== 'Average Price Planner') throw new BackupValidationError('backup.invalidRoot');
   const legacySchema = document.backupSchemaVersion === 0 || document.backupSchemaVersion === 1;
-  if (document.backupSchemaVersion !== BACKUP_SCHEMA_VERSION && !legacySchema) throw new Error('Import rejected: unsupported backup schema version.');
+  if (document.backupSchemaVersion !== BACKUP_SCHEMA_VERSION && !legacySchema) throw new BackupValidationError('backup.unsupportedSchema');
   const applicationVersion = typeof document.applicationVersion === 'string'
     ? document.applicationVersion
     : legacySchema && typeof document.version === 'string' ? document.version : null;
-  if (!applicationVersion || typeof document.exportedAt !== 'string') throw new Error('Import rejected: backup metadata is incomplete.');
+  if (!applicationVersion || typeof document.exportedAt !== 'string') throw new BackupValidationError('backup.metadataIncomplete');
   const scope = document.scope === 'all' || document.scope === 'active' ? document.scope : legacySchema ? 'all' : null;
-  if (!scope) throw new Error('Import rejected: backup scope is invalid.');
-  if (!Array.isArray(document.positions)) throw new Error('Import rejected: positions must be a list.');
+  if (!scope) throw new BackupValidationError('backup.invalidRoot');
+  if (!Array.isArray(document.positions)) throw new BackupValidationError('backup.invalidRoot');
   const positions = document.positions.map(validateBackupPosition);
   const scenarios = Array.isArray(document.scenarios) ? document.scenarios.map(validateBackupScenario) : [];
   const comparisonScenarioIds = Array.isArray(document.comparisonScenarioIds)
     ? document.comparisonScenarioIds.filter((id): id is string => typeof id === 'string')
     : [];
-  if (document.activeHoldingId !== undefined && typeof document.activeHoldingId !== 'string') throw new Error('Import rejected: active position identifier is invalid.');
+  if (document.activeHoldingId !== undefined && typeof document.activeHoldingId !== 'string') throw new BackupValidationError('backup.invalidRoot');
   return {
     application: 'Average Price Planner',
     backupSchemaVersion: BACKUP_SCHEMA_VERSION,

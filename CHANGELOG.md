@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.7
+
+- Corrected application-version metadata in exported backups.
+- Localized detailed backup-import validation errors.
+- Removed hard-coded `Untitled scenario` runtime fallbacks and added accessible selected state to the EN/RU selector.
+- No calculation, storage-schema, backup-schema, JSON-structure, or CSV changes.
+
 ## 1.9.6
 
 - Corrected remaining Russian share grammar and oversell plural forms.
