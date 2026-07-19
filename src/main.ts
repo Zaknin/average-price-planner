@@ -43,7 +43,8 @@ import {
   summarizeScenario,
 } from './planner';
 import { helpHash, helpRouteFromHash, renderHelp } from './help';
-import { formatCurrency as formatLocalizedCurrency, formatDateTime, formatNumber as formatLocalizedNumber, formatPercent, getLocale, initializeLocale, parseLocalizedDecimal, plural, setLocale, t, type Locale } from './i18n';
+import { formatCurrency as formatLocalizedCurrency, formatDateTime, formatNumber as formatLocalizedNumber, formatPercent, getLocale, initializeLocale, parseLocalizedDecimal, plural, countPhrase, setLocale, t, type Locale } from './i18n';
+import { formatBackupExportNotice, formatImportCompletionNotice, formatPlanCsvExportNotice } from './notices';
 import { APP_VERSION } from './version';
 
 type HoldingState = {
@@ -438,12 +439,6 @@ function formatQuantity(value: number, holding = activeHolding()): string {
     ? Math.min(6, Math.max(3, String(step).split('.')[1]?.length ?? 3))
     : 2;
   return formatLocalizedNumber(value, digits);
-}
-
-function countPhrase(value: number, one: string, few: string, many: string, fractional = few): string {
-  const formatted = formatLocalizedNumber(value);
-  if (getLocale() !== 'ru') return formatted;
-  return `${formatted} ${Number.isInteger(value) ? plural(value, one, few, many) : fractional}`;
 }
 
 function sharePhrase(value: number, context: 'standalone' | 'genitive' | 'complete' = 'standalone', holding = activeHolding()): string {
@@ -1212,7 +1207,7 @@ function exportBackup(scope: 'all' | 'active'): void {
   const backup = createBackup(positions as unknown as BackupPosition[], scope === 'all' ? store.activeHoldingId : undefined, scope, undefined, scenarios as unknown as BackupPosition[], scope === 'all' ? store.comparisonScenarioIds : store.comparisonScenarioIds.filter((id) => scenarios.some((scenario) => scenario.id === id)));
   const prefix = scope === 'active' && holding.ticker ? holding.ticker.replace(/[^A-Z0-9._-]/gi, '').slice(0, 24) : 'average-price-planner';
   downloadText(`${prefix}-backup-${dateStamp()}.json`, JSON.stringify(backup, null, 2), 'application/json;charset=utf-8');
-  notice = t('exportedBackup', { positions: countPhrase(positions.length, 'позиция', 'позиции', 'позиций'), scenarios: countPhrase(scenarios.length, 'сценарий', 'сценария', 'сценариев') });
+  notice = formatBackupExportNotice(positions.length, scenarios.length);
   render();
 }
 
@@ -1238,7 +1233,7 @@ function exportPlanCsv(): void {
   }));
   const prefix = (holding.ticker || 'position').replace(/[^A-Z0-9._-]/gi, '').slice(0, 24);
   downloadText(`${prefix}-plan-${dateStamp()}.csv`, planCsv(rows), 'text/csv;charset=utf-8');
-  notice = t('exportedPlanCsv', { rows: countPhrase(rows.length, 'операция', 'операции', 'операций') });
+  notice = formatPlanCsvExportNotice(rows.length);
   render();
 }
 
@@ -1274,7 +1269,7 @@ function applyPendingImport(mode: 'merge' | 'replace'): void {
   const transactionCount = imported.reduce((total, holding) => total + holding.transactions.length, 0);
   pendingImport = null;
   saveStore();
-  notice = t('importedData', { positions: countPhrase(imported.length, 'позиция', 'позиции', 'позиций'), transactions: countPhrase(transactionCount, 'операция плана', 'операции плана', 'операций плана'), scenarios: countPhrase(importedScenarios.length, 'сценарий', 'сценария', 'сценариев') });
+  notice = formatImportCompletionNotice(imported.length, transactionCount, importedScenarios.length);
   render();
 }
 

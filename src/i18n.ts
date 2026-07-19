@@ -57,6 +57,29 @@ export function plural(count: number, one: string, few: string, many: string): s
   return many;
 }
 
+export function countPhrase(value: number, one: string, few: string, many: string, fractional = few): string {
+  const formatted = formatNumber(value);
+  return `${formatted} ${Number.isInteger(value) ? plural(value, one, few, many) : fractional}`;
+}
+
+export function positionCountPhrase(value: number): string {
+  return locale === 'ru'
+    ? countPhrase(value, 'позиция', 'позиции', 'позиций')
+    : countPhrase(value, 'position', 'positions', 'positions');
+}
+
+export function planOperationCountPhrase(value: number): string {
+  return locale === 'ru'
+    ? countPhrase(value, 'операция плана', 'операции плана', 'операций плана')
+    : countPhrase(value, 'plan transaction', 'plan transactions', 'plan transactions');
+}
+
+export function scenarioCountPhrase(value: number): string {
+  return locale === 'ru'
+    ? countPhrase(value, 'сценарий', 'сценария', 'сценариев')
+    : countPhrase(value, 'scenario', 'scenarios', 'scenarios');
+}
+
 export function formatNumber(value: number, maximumFractionDigits = 4): string {
   return Number.isFinite(value) ? new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value) : '—';
 }

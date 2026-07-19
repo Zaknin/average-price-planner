@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { createBackup } from '../src/data';
 import { t } from '../src/i18n';
 
 const STORE_KEY = 'average-down-optimizer:v2';
 
 beforeAll(async () => {
   document.body.innerHTML = '<div id="app"></div>';
+  Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:notice-test'), revokeObjectURL: vi.fn() });
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
   localStorage.clear();
   localStorage.setItem(STORE_KEY, JSON.stringify({
     version: 4,
@@ -115,5 +118,40 @@ describe('v2.0 Russian quantity and price summaries', () => {
     expect(t('realizedProfitLoss')).toBe('Realized P/L');
     expect(t('dcaLadder')).toBe('DCA Ladder');
     expect(t('stressTests')).toBe('Stress tests');
+  });
+
+  it('renders Russian backup and plan CSV notices after successful exports', () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+
+    document.querySelector<HTMLButtonElement>('#exportAll')?.click();
+    expect(document.querySelector('.notice')?.textContent).toBe('Резервная копия сохранена в JSON-файл. Содержимое: 1 позиция; 1 сценарий.');
+
+    document.querySelector<HTMLButtonElement>('#addTransaction')?.click();
+    document.querySelector<HTMLButtonElement>('#exportCsv')?.click();
+    expect(document.querySelector('.notice')?.textContent).toBe('План экспортирован в CSV. Экспортировано: 1 операция плана.');
+  });
+
+  it('renders the shared Russian completion notice after Merge and Replace imports', async () => {
+    document.querySelector<HTMLButtonElement>('[data-locale="ru"]')?.click();
+    const persisted = JSON.parse(localStorage.getItem(STORE_KEY) ?? '{}') as { holdings: Array<Record<string, unknown>>; scenarios: Array<Record<string, unknown>> };
+    const importedPosition = { ...persisted.holdings[0], id: 'import-position', transactions: [] };
+    const importedScenario = { ...persisted.scenarios[0], id: 'import-scenario', holdingId: 'import-position', transactions: [] };
+    const selectBackup = async (backup: ReturnType<typeof createBackup>): Promise<void> => {
+      const input = document.querySelector<HTMLInputElement>('#importJson');
+      if (!input) throw new Error('Missing backup import input');
+      Object.defineProperty(input, 'files', { configurable: true, value: [{ text: async () => JSON.stringify(backup) }] as unknown as FileList });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    await selectBackup(createBackup([importedPosition], 'import-position', 'all', '2026-07-19T00:00:00.000Z', [importedScenario]));
+    document.querySelector<HTMLButtonElement>('#applyMergeImport')?.click();
+    expect(document.querySelector('.notice')?.textContent).toBe('Импорт завершён: 1 позиция; 0 операций плана; 1 сценарий.');
+
+    await selectBackup(createBackup([], undefined, 'all', '2026-07-19T00:00:00.000Z'));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    document.querySelector<HTMLButtonElement>('#applyReplaceImport')?.click();
+    confirm.mockRestore();
+    expect(document.querySelector('.notice')?.textContent).toBe('Импорт завершён: 0 позиций; 0 операций плана; 0 сценариев.');
   });
 });

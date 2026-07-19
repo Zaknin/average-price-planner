@@ -111,7 +111,7 @@ describe('Russian editorial parity', () => {
     ] as Array<[string, string]>) expect(t('cannotSellMore', { shares })).toBe(expected);
     expect(t('plannerInvalidTarget')).toBe('Введите числовое значение не меньше нуля.');
     expect(t('plannerInvalidLadderFee')).toBe('Введите нулевую или положительную комиссию.');
-    expect(t('exportedBackup', { positions: 1, scenarios: 2 })).toBe('Резервная копия сохранена в JSON-файл: 1; сценариев: 2.');
+    expect(t('exportedBackup', { positions: 1, scenarios: 2 })).toBe('Резервная копия сохранена в JSON-файл. Содержимое: 1; 2.');
     expect(t('confirmReplaceImport')).toContain('Позиции, планы и сценарии будут удалены и заменены.');
     expect(t('confirmReplaceImport')).toContain('рекомендуется экспортировать текущую резервную копию');
     expect(t('targetNetProceeds')).toBe('Целевая сумма после комиссии');
