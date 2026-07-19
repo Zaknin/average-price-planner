@@ -16,6 +16,11 @@ describe('Russian editorial parity', () => {
       const russianTopic = russianTopics.find((topic) => topic.slug === englishTopic.slug);
       expect(russianTopic?.relatedSection).toBe(englishTopic.relatedSection);
       expect(russianTopic?.blocks.filter((block) => block.type === 'example')).toHaveLength(englishTopic.blocks.filter((block) => block.type === 'example').length);
+      const englishDefinitions = englishTopic.blocks.find((block) => block.type === 'definitions');
+      const russianDefinitions = russianTopic?.blocks.find((block) => block.type === 'definitions');
+      if (englishDefinitions?.type === 'definitions' && russianDefinitions?.type === 'definitions') {
+        expect(russianDefinitions.items).toHaveLength(englishDefinitions.items.length);
+      }
     }
   });
 
@@ -98,6 +103,30 @@ describe('Russian editorial parity', () => {
     expect(textFor('executed-transactions')).not.toContain('статусы и строки просмотра');
     expect(textFor('backup-export')).toContain('без незаметной перезаписи существующих записей');
     expect(textFor('privacy')).toContain('отдельное серверное хранилище приложения');
+  });
+
+  it('keeps the six isolated Russian Help corrections precise and scoped', () => {
+    const textFor = (slug: string): string => helpTopicSearchText(russianTopics.find((topic) => topic.slug === slug)!);
+    expect(textFor('positions')).toContain('для каждой позиции отдельно хранятся валюта');
+    expect(textFor('buying-guide')).toContain('доля возможного снижения');
+    expect(textFor('saved-scenarios')).toContain('«сохранить изменения» обновляет выбранный сценарий');
+    expect(textFor('dca-ladder')).toContain('наибольшую сумму собственных средств');
+    expect(textFor('privacy')).toContain('какие данные сохраняет резервная копия');
+    expect(textFor('glossary')).toContain('остаток бюджета, которого недостаточно');
+
+    const russianCatalog = russianTopics.map(helpTopicSearchText).join('\n');
+    for (const deprecated of [
+      'у каждой позиции свои валюта', 'достигнутое возможное снижение', 'обновляет выбранный сценарий намеренно',
+      'сумму собственного капитала', 'что защищает резервная копия', 'деньги, на которые нельзя купить',
+    ]) expect(russianCatalog).not.toContain(deprecated);
+  });
+
+  it('leaves representative English Help wording unchanged', () => {
+    const englishText = helpTopics.map(helpTopicSearchText).join('\n');
+    for (const phrase of [
+      'each position has its own currency, fees, ordinary plan, and scenarios.', 'available average reduction reached',
+      'cash left after permitted rounded orders', 'where portfolio records are kept and what a browser backup protects',
+    ]) expect(englishText).toContain(phrase);
   });
 
   it('keeps v1.9.6 Russian runtime messages factual and fully qualified', () => {
