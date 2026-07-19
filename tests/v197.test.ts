@@ -27,10 +27,10 @@ beforeEach(() => {
   setLocale('en');
 });
 
-describe('v1.9.7 backup metadata and localized diagnostics', () => {
+describe('v2.0.0 backup metadata and localized diagnostics', () => {
   it('uses the build-time package version while retaining backup schema v2 and old-backup compatibility', () => {
     expect(APP_VERSION).toBe(packageJson.version);
-    expect(APP_VERSION).toBe('1.9.7');
+    expect(APP_VERSION).toBe('2.0.0');
     const backup = validBackup();
     expect(backup.applicationVersion).toBe(APP_VERSION);
     expect(backup.backupSchemaVersion).toBe(2);
@@ -87,7 +87,7 @@ describe('v1.9.7 backup metadata and localized diagnostics', () => {
   });
 });
 
-describe('v1.9.7 scenario fallback and language-selector accessibility', () => {
+describe('v2.0.0 scenario fallback and language-selector accessibility', () => {
   it('localizes only an empty scenario display name without changing user data', () => {
     const emptyName = '';
     const userName = 'Untitled scenario';

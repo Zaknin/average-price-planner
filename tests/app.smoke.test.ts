@@ -71,7 +71,7 @@ describe('application smoke test', () => {
     expect(document.documentElement.lang).toBe('ru');
     expect(document.body.textContent).toContain('Планировщик средней цены');
     expect(document.body.textContent).toContain('Расчёт операции');
-    expect(document.querySelector('.release-tag')?.textContent).toBe('v1.9.7');
+    expect(document.querySelector('.release-tag')?.textContent).toBe('v2.0.0');
     expect(document.querySelector('.locale-control')?.getAttribute('aria-label')).toBe('Language / Язык');
     expect(document.querySelector('[data-locale="en"]')?.getAttribute('aria-pressed')).toBe('false');
     expect(document.querySelector('[data-locale="ru"]')?.getAttribute('aria-pressed')).toBe('true');

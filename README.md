@@ -24,7 +24,9 @@ This application performs arithmetic and planning only. It does not provide fina
 
 ## Current version
 
-v1.9.7
+v2.0.0
+
+Version 2.0.0 is a Russian-interface final-polish milestone. It preserves the store v4 and backup v2 schemas, existing browser data, supported backups, calculation behavior, and JSON/CSV exports; no data migration is required.
 
 ## Русская версия
 

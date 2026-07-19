@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.0
+
+Russian interface and final-polish milestone:
+
+- Corrected remaining Russian share grammar in current-position summaries.
+- Added context-specific Russian wording for average, transaction, and market prices.
+- Removed unnecessary hybrid English labels from ordinary Russian screens.
+- Refined JSON backup, plan CSV, and import-completion notices.
+- Improved isolated Russian Help terminology and grammar, and clarified browser-storage wording.
+- Corrected unnamed-position Buy and Sell headings and expanded rendered Russian regression coverage.
+- Preserved bilingual glossary aliases and the approved terms DCA, P/L, JSON, and CSV.
+- No calculation, store-schema, backup-schema, JSON-format, or CSV-format changes; existing v1.9.7 browser data and supported backups remain compatible.
+
+Version 2.0.0 is a product milestone and does not require a data migration.
+
 ## 1.9.7
 
 - Corrected application-version metadata in exported backups.
